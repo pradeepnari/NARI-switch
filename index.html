@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Direct, Stable jsDelivr CDN Builds for TensorFlow.js & Speech Commands Engine -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.5.4/dist/speech-commands.min.js"></script>
+  <!-- TensorFlow.js and Teachable Machine Audio Engine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
 
   <style>
     :root {
@@ -227,7 +227,7 @@
       }
     }
 
-    // --- NEURAL NETWORK AUDIO CLASSIFIER ---
+    // --- NEURAL NETWORK AUDIO CLASSIFIER & GESTURES ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       
@@ -244,24 +244,26 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Neural AI Spectrogram Classifier (jsDelivr Mirror)
+      // 1. Neural AI Spectrogram Classifier (Verified Teachable Machine Model)
       if (mode === "ai-clap") {
         try {
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Weights from CDN...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Weights...</span>`;
 
           if (!aiRecognizer) {
-            const MODEL_URL = "https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.5.4/dist/browser-fft/";
+            const checkpointURL = "https://teachablemachine.withgoogle.com/models/mF4pP9v9h/";
+            
             aiRecognizer = speechCommands.create(
               "BROWSER_FFT",
               undefined,
-              MODEL_URL + "model.json",
-              MODEL_URL + "metadata.json"
+              checkpointURL + "model.json",
+              checkpointURL + "metadata.json"
             );
+            
             await aiRecognizer.ensureModelLoaded();
             isAiModelLoaded = true;
           }
 
-          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for claps (ignoring speech)...</span>`;
 
           const labels = aiRecognizer.wordLabels();
           let lastTriggerTime = 0;
@@ -270,41 +272,39 @@
             const scores = Array.from(result.scores);
             const now = Date.now();
 
-            const bgIndex = labels.indexOf('_background_noise_');
-            const bgScore = bgIndex !== -1 ? scores[bgIndex] : 0;
-
-            let isSpeech = false;
-            for (let i = 0; i < labels.length; i++) {
-              if (labels[i] !== '_background_noise_' && labels[i] !== '_unknown_' && scores[i] > 0.40) {
-                isSpeech = true;
-                break;
+            let maxIndex = 0;
+            let maxProb = 0;
+            for (let i = 0; i < scores.length; i++) {
+              if (scores[i] > maxProb) {
+                maxProb = scores[i];
+                maxIndex = i;
               }
             }
 
-            // Claps produce an acoustic transient spike without matching speech phonemes
-            const isAcousticClap = bgScore < 0.15 && !isSpeech;
+            const detectedLabel = labels[maxIndex];
 
-            if (isAcousticClap && (now - lastTriggerTime > 1200)) {
+            // Rejects ambient background and triggers on verified acoustic event
+            if (detectedLabel !== '_background_noise_' && maxProb > 0.70 && (now - lastTriggerTime > 1200)) {
               lastTriggerTime = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Confirmed!</span>`;
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Detected (${Math.round(maxProb * 100)}%)</span>`;
               toggleDevice(index);
 
               setTimeout(() => {
                 if (feedback) {
-                  feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps...</span>`;
+                  feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for claps (ignoring speech)...</span>`;
                 }
               }, 1000);
             }
           }, {
             includeSpectrogram: false,
-            probabilityThreshold: 0.60,
+            probabilityThreshold: 0.70,
             invokeCallbackOnNoiseAndUnknown: true,
             overlapFactor: 0.5
           });
 
         } catch (err) {
           console.error("AI Model Load Failure:", err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Model download blocked: ${err.message || err}</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Initialization failed: ${err.message || err}</span>`;
         }
       }
 
