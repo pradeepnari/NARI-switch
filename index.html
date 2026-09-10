@@ -93,7 +93,7 @@
     .voice-input-row label { font-size: 0.74rem; font-weight: 600; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
     .custom-voice-input { background: #141b2d; border: 1px solid var(--card-border); color: var(--accent); padding: 8px 10px; border-radius: 8px; font-size: 0.84rem; outline: none; width: 100%; }
 
-    /* Personal Clap Training Panel */
+    /* Personal Clap Training & Cadence Panel */
     .clap-trainer-box {
       display: none;
       flex-direction: column;
@@ -123,6 +123,33 @@
     }
     .btn-train-clap.listening { background: #dc2626; animation: pulse 1s infinite alternate; }
     @keyframes pulse { from { opacity: 0.8; } to { opacity: 1.0; } }
+
+    /* Single / Double Clap Toggle Options */
+    .clap-cadence-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--card-border);
+    }
+    .clap-cadence-row label {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .select-cadence {
+      background: #141b2d;
+      border: 1px solid var(--card-border);
+      color: #38bdf8;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      outline: none;
+      cursor: pointer;
+      width: auto;
+    }
 
     /* Responsive Level & Match Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
@@ -188,6 +215,12 @@
       saveState();
     }
 
+    function updateClapCadence(index, cadence) {
+      devices[index].clapCadence = cadence;
+      saveState();
+      handleModeChange(index, "trained-clap");
+    }
+
     function render() {
       const list = document.getElementById("deviceList");
       list.innerHTML = "";
@@ -202,6 +235,7 @@
         const currentMode = dev.mode || "none";
         const voiceOn = dev.voiceOn || "light on";
         const voiceOff = dev.voiceOff || "light off";
+        const clapCadence = dev.clapCadence || "single"; // 'single' or 'double'
         const hasTrainedClap = dev.clapProfile && dev.clapProfile.length > 0;
         const card = document.createElement("div");
         card.className = "card";
@@ -246,7 +280,7 @@
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <!-- Personal Clap Profile Trainer -->
+            <!-- Personal Clap Profile Trainer & Trigger Selector -->
             <div class="clap-trainer-box" id="clap-trainer-box-${index}" style="display: ${currentMode === 'trained-clap' ? 'flex' : 'none'};" onclick="event.stopPropagation();">
               <div class="trainer-header">
                 <span><i class="fa-solid fa-fingerprint"></i> Biometric Hand Fingerprint</span>
@@ -259,6 +293,15 @@
                   <i class="fa-solid fa-hands-clapping"></i> Record 5 Personal Claps
                 </button>
                 ${hasTrainedClap ? `<button class="btn-train-clap" style="flex:0.4; background:#334155;" onclick="clearClapProfile(${index})">Reset</button>` : ''}
+              </div>
+
+              <!-- SINGLE vs DOUBLE CLAP SELECTOR -->
+              <div class="clap-cadence-row">
+                <label><i class="fa-solid fa-sliders"></i> Trigger Mode:</label>
+                <select class="select-cadence" onchange="updateClapCadence(${index}, this.value)">
+                  <option value="single" ${clapCadence === 'single' ? 'selected' : ''}>Single Clap (👏 Instant)</option>
+                  <option value="double" ${clapCadence === 'double' ? 'selected' : ''}>Double Clap (👏 .. 👏 Safe)</option>
+                </select>
               </div>
             </div>
 
@@ -296,7 +339,7 @@
       const name = document.getElementById("devName").value.trim();
       const ip = document.getElementById("devIp").value.trim();
       if (!name || !ip) return alert("Fill in both fields.");
-      devices.push({ name, ip, state: false, mode: "none", voiceOn: "light on", voiceOff: "light off", clapProfile: null });
+      devices.push({ name, ip, state: false, mode: "none", voiceOn: "light on", voiceOff: "light off", clapProfile: null, clapCadence: "single" });
       saveState();
       render();
       closeModal();
@@ -338,13 +381,12 @@
       }
     }
 
-    // --- RELIABLE AUDIO PIPELINE INITIALIZATION ---
+    // --- AUDIO SYSTEM & SPECTRAL FINGERPRINT EXTRACTOR ---
     async function initAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
       
       if (!micStream) {
-        // Standard user media query without strict destructive hardware flags
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
       if (!analyser) {
@@ -395,7 +437,7 @@
       return dot / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
-    // --- TRAINING CONTROLLER WITH LIVE RESPONSIVE METER ---
+    // --- TRAINING CONTROLLER ---
     async function startClapTraining(index) {
       await initAudio();
       isTrainingClap = true;
@@ -424,14 +466,12 @@
 
         const fp = extractFingerprint(freqData, timeData);
 
-        // LIVE METER FEEDBACK DURING TRAINING: Confirms mic is active
         const visualPct = Math.min(100, Math.round((fp.peak / 45) * 100));
         if (meterBar) {
           meterBar.style.width = `${visualPct}%`;
           meterBar.style.background = fp.peak > 14 ? '#10b981' : '#38bdf8';
         }
 
-        // Sensitive impulse gate: peak > 14 and crest > 2.5
         if (fp.peak > 14 && fp.crest > 2.5 && armed) {
           armed = false;
           clapTrainingBuffer.push(Array.from(fp.bands));
@@ -442,7 +482,6 @@
             btn.innerHTML = `<i class="fa-solid fa-hands-clapping"></i> Waiting for Clap ${count + 1} of 5...`;
             feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">CLAP ${count} SAVED</span> <span>Clap again (${count + 1} of 5)...</span>`;
           } else {
-            // Average the 5 recorded spectral fingerprints
             const profile = new Array(16).fill(0);
             for (let i = 0; i < 5; i++) {
               for (let b = 0; b < 16; b++) profile[b] += clapTrainingBuffer[i][b];
@@ -455,13 +494,12 @@
             isTrainingClap = false;
             btn.classList.remove("listening");
             btn.innerHTML = `<i class="fa-solid fa-hands-clapping"></i> Retrain Hand Profile`;
-            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">PROFILE ACTIVE</span> <span>Trained! Listening for your claps...</span>`;
+            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">PROFILE ACTIVE</span> <span>Trained! Ready to listen...</span>`;
             render();
             handleModeChange(index, "trained-clap");
             return;
           }
 
-          // 350ms lockout between sample claps
           setTimeout(() => { armed = true; }, 350);
         }
 
@@ -477,7 +515,7 @@
       handleModeChange(index, "trained-clap");
     }
 
-    // --- RUNTIME MATCHER ---
+    // --- RUNTIME MATCHER (SUPPORTS BOTH SINGLE & DOUBLE CLAP CADENCE) ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -513,18 +551,23 @@
         if (meterBox) meterBox.style.display = "block";
 
         const profile = devices[index].clapProfile;
+        const cadence = devices[index].clapCadence || "single";
+
         if (!profile) {
           feedback.innerHTML = `<span class="ai-badge">Setup</span> <span>Click "Record 5 Personal Claps" above to train.</span>`;
           return;
         }
 
         await initAudio();
-        feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR unique claps...</span>`;
+        const modeLabel = cadence === "double" ? "Double Clap (👏 .. 👏)" : "Single Clap (👏)";
+        feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR ${modeLabel}...</span>`;
 
         const timeData = new Uint8Array(analyser.fftSize);
         const freqData = new Uint8Array(analyser.frequencyBinCount);
         let armed = true;
         let lastTrigger = 0;
+        let firstClapTime = 0;
+        let isWaitingForSecond = false;
 
         function matchLoop() {
           analyser.getByteTimeDomainData(timeData);
@@ -532,42 +575,80 @@
 
           const fp = extractFingerprint(freqData, timeData);
 
-          // Compute spectral match against your stored hand profile
           const matchScore = (fp.peak > 14 && fp.crest > 2.5) 
             ? computeCosineSimilarity(fp.bands, profile) 
             : 0;
 
-          // Meter displays live audio amplitude when quiet, transitions to green on match
           const matchPct = Math.round(matchScore * 100);
           const liveAmpPct = Math.min(100, Math.round((fp.peak / 45) * 100));
 
           if (meterBar) {
-            if (matchScore > 0.65) {
+            if (isWaitingForSecond) {
+              meterBar.style.width = '75%';
+              meterBar.style.background = '#f59e0b'; // Amber while waiting for 2nd clap
+            } else if (matchScore > 0.65) {
               meterBar.style.width = `${matchPct}%`;
-              meterBar.style.background = '#10b981'; // Green on biometric match
+              meterBar.style.background = '#10b981'; // Green on match
             } else {
               meterBar.style.width = `${liveAmpPct}%`;
-              meterBar.style.background = '#38bdf8'; // Blue on ambient/speech sound
+              meterBar.style.background = '#38bdf8'; // Blue for ambient
             }
           }
 
           const now = Date.now();
+          const isPersonalClap = matchScore > 0.72 && fp.crest > 2.8;
 
-          // Biometric Trigger Rule
-          if (matchScore > 0.72 && fp.crest > 2.8 && armed && (now - lastTrigger > 1200)) {
-            armed = false;
-            lastTrigger = now;
+          // --- CADENCE DECISION ENGINE ---
+          if (isPersonalClap && armed) {
+            if (cadence === "single") {
+              // --- SINGLE CLAP MODE ---
+              if (now - lastTrigger > 1200) {
+                armed = false;
+                lastTrigger = now;
 
-            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Verified Your Hand Clap (${matchPct}%)</span>`;
-            toggleDevice(index);
+                feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Single Clap Confirmed (${matchPct}%)</span>`;
+                toggleDevice(index);
 
-            setTimeout(() => {
-              armed = true;
-              if (feedback) feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR unique claps...</span>`;
-            }, 1000);
+                setTimeout(() => {
+                  armed = true;
+                  if (feedback) feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR Single Clap (👏)...</span>`;
+                }, 1000);
+              }
+            } else {
+              // --- DOUBLE CLAP MODE ---
+              armed = false;
+
+              if (!isWaitingForSecond) {
+                // 1st Clap Confirmed
+                isWaitingForSecond = true;
+                firstClapTime = now;
+                feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more quickly (👏)...</span>`;
+                setTimeout(() => { armed = true; }, 150); // 150ms deadband for echo
+              } else {
+                // 2nd Clap Verified within 150ms - 800ms
+                const delta = now - firstClapTime;
+                if (delta >= 150 && delta <= 800) {
+                  feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Confirmed (${matchPct}%)</span>`;
+                  toggleDevice(index);
+
+                  isWaitingForSecond = false;
+                  setTimeout(() => {
+                    armed = true;
+                    if (feedback) feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR Double Clap (👏 .. 👏)...</span>`;
+                  }, 1100);
+                }
+              }
+            }
           }
 
-          if (!armed && fp.peak < 8 && (now - lastTrigger > 800)) {
+          // Timeout if 2nd clap isn't provided within 800ms
+          if (isWaitingForSecond && (now - firstClapTime > 800)) {
+            isWaitingForSecond = false;
+            armed = true;
+            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR Double Clap (👏 .. 👏)...</span>`;
+          }
+
+          if (!armed && fp.peak < 8 && !isWaitingForSecond && (now - lastTrigger > 800)) {
             armed = true;
           }
 
