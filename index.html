@@ -125,7 +125,7 @@
     let micStream = null;
     let animFrame = null;
     let diyIntervals = {};
-    let clapSensitivity = 35; // Default threshold delta
+    let clapSensitivity = 35; // Default spike trigger sensitivity
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -183,7 +183,7 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="clap">Adaptive Double Clap Detector</option>
+              <option value="clap">Acoustic: Amplified Clap / Snap (Pre-Amp)</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
@@ -192,10 +192,10 @@
             
             <div class="slider-box" id="slider-box-${index}" onclick="event.stopPropagation();">
               <div class="slider-header">
-                <span>Clap Spike Threshold</span>
+                <span>Sensitivity Threshold</span>
                 <span id="thresh-val-${index}">${clapSensitivity}</span>
               </div>
-              <input type="range" min="15" max="80" value="${clapSensitivity}" oninput="updateSensitivity(${index}, this.value)">
+              <input type="range" min="15" max="100" value="${clapSensitivity}" oninput="updateSensitivity(${index}, this.value)">
             </div>
 
             <div class="meter-container" id="meter-box-${index}">
@@ -251,7 +251,7 @@
       }
     }
 
-    // --- ADAPTIVE ACOUSTIC ENGINE ---
+    // --- AMPLIFIED ACOUSTIC & SENSOR HANDLER ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       const meterBox = document.getElementById(`meter-box-${index}`);
@@ -272,105 +272,89 @@
       }
       if (feedback) feedback.style.display = "flex";
 
+      // 1. Amplified Pre-Amp Acoustic Clap / Snap Detector
       if (mode === "clap") {
         try {
-          feedback.querySelector("span").innerText = "Listening to room acoustics...";
+          feedback.querySelector("span").innerText = "Activating raw microphone...";
           meterBox.style.display = "block";
           sliderBox.style.display = "flex";
           
           if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
           
+          // Force disable mobile noise-suppression and AGC
           if (!micStream) {
-            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            micStream = await navigator.mediaDevices.getUserMedia({ 
+              audio: { 
+                echoCancellation: false, 
+                noiseSuppression: false, 
+                autoGainControl: false 
+              } 
+            });
           }
 
           const source = audioCtx.createMediaStreamSource(micStream);
 
-          // Bandpass: Isolates the high snap of clapping hands (1.0 kHz - 3.5 kHz)
+          // 8x Digital Pre-Amplifier Gain
+          const gainNode = audioCtx.createGain();
+          gainNode.gain.setValueAtTime(8.0, audioCtx.currentTime);
+
+          // High-pass filter cuts voice/fan base below 1000 Hz
           const filter = audioCtx.createBiquadFilter();
-          filter.type = "bandpass";
-          filter.frequency.setValueAtTime(1800, audioCtx.currentTime);
-          filter.Q.setValueAtTime(1.2, audioCtx.currentTime);
+          filter.type = "highpass";
+          filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
 
           const analyser = audioCtx.createAnalyser();
           analyser.fftSize = 256;
-          source.connect(filter);
+          
+          source.connect(gainNode);
+          gainNode.connect(filter);
           filter.connect(analyser);
 
+          feedback.querySelector("span").innerText = "Gentle Clap or Snap to toggle (👏)...";
+
           const buffer = new Uint8Array(analyser.fftSize);
-          let runningFloor = 10; // Dynamic baseline noise tracker
-          let firstClapTime = 0;
-          let isWaitingForSecond = false;
-          let debounce = false;
+          let lastTrigger = 0;
+          let armed = true;
 
           function loop() {
             analyser.getByteTimeDomainData(buffer);
 
-            // Compute peak excursion from center
-            let currentPeak = 0;
+            let peak = 0;
             for (let i = 0; i < buffer.length; i++) {
-              const excursion = Math.abs(buffer[i] - 128);
-              if (excursion > currentPeak) currentPeak = excursion;
+              const diff = Math.abs(buffer[i] - 128);
+              if (diff > peak) peak = diff;
             }
 
-            // Exponential Moving Average to track continuous room noise floor
-            runningFloor = (runningFloor * 0.96) + (currentPeak * 0.04);
-
-            // Calculate instantaneous spike above background noise
-            const spikeDelta = currentPeak - runningFloor;
-
-            // Visual meter rendering
-            const pct = Math.min(100, (currentPeak / 80) * 100);
+            // Visual meter scaling (0 - 120 max excursion)
+            const pct = Math.min(100, (peak / 120) * 100);
             if (meterBar) {
               meterBar.style.width = `${pct}%`;
-              meterBar.style.background = spikeDelta > clapSensitivity ? '#10b981' : '#38bdf8';
+              meterBar.style.background = peak > clapSensitivity ? '#10b981' : '#38bdf8';
             }
             if (threshLine) {
-              const threshPct = Math.min(100, ((runningFloor + clapSensitivity) / 80) * 100);
+              const threshPct = Math.min(100, (clapSensitivity / 120) * 100);
               threshLine.style.left = `${threshPct}%`;
             }
 
             const now = Date.now();
 
-            // Check if transient spike exceeds background floor by sensitivity margin
-            if (spikeDelta > clapSensitivity && !debounce) {
-              debounce = true;
+            // Instant impulse trigger with 1000ms cooldown
+            if (peak > clapSensitivity && armed && (now - lastTrigger > 1000)) {
+              armed = false;
+              lastTrigger = now;
+              feedback.querySelector("span").innerText = "✓ Clap Detected!";
+              toggleDevice(index);
 
-              if (!isWaitingForSecond) {
-                // First clap verified
-                isWaitingForSecond = true;
-                firstClapTime = now;
-                feedback.querySelector("span").innerText = "👏 1st Clap! Clap once more...";
-
-                // Lockout window (160ms) to ignore acoustic room echo of the 1st clap
-                setTimeout(() => { debounce = false; }, 160);
-              } else {
-                const delta = now - firstClapTime;
-                // Human double-clap rhythm window (160ms to 900ms)
-                if (delta >= 160 && delta <= 900) {
-                  feedback.querySelector("span").innerText = "✓ Double Clap Confirmed!";
-                  toggleDevice(index);
-                  
-                  isWaitingForSecond = false;
-                  setTimeout(() => {
-                    debounce = false;
-                    if (feedback) feedback.querySelector("span").innerText = "Listening for Double Clap (👏 .. 👏)...";
-                  }, 1200);
-                }
-              }
+              setTimeout(() => {
+                armed = true;
+                if (feedback) feedback.querySelector("span").innerText = "Gentle Clap or Snap to toggle (👏)...";
+              }, 1000);
             }
 
-            // Reset if second clap times out
-            if (isWaitingForSecond && (now - firstClapTime > 900)) {
-              isWaitingForSecond = false;
-              debounce = false;
-              feedback.querySelector("span").innerText = "Listening for Double Clap (👏 .. 👏)...";
-            }
-
-            // Re-arm when signal settles back down
-            if (debounce && spikeDelta < (clapSensitivity * 0.4) && !isWaitingForSecond) {
-              debounce = false;
+            // Re-arm when audio settles below 50% of threshold
+            if (!armed && peak < (clapSensitivity * 0.5) && (now - lastTrigger > 500)) {
+              armed = true;
             }
 
             animFrame = requestAnimationFrame(loop);
@@ -378,7 +362,7 @@
           loop();
 
         } catch (err) {
-          alert("Microphone permission denied.");
+          alert("Microphone permission denied or raw audio unavailable.");
           if (feedback) feedback.style.display = "none";
         }
       }
