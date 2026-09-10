@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Standalone TensorFlow.js Engine (Self-contained) -->
+  <!-- Standalone Core TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
@@ -82,10 +82,10 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* AI Live Prediction Meter */
+    /* Confidence Output Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
     .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 80%; width: 2px; background: #ef4444; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 75%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -126,7 +126,30 @@
     let micStream = null;
     let animFrame = null;
     let diyIntervals = {};
-    let neuralModel = null;
+
+    // --- WEIGHT TENSORS FOR ACOUSTIC CLASSIFIER ---
+    // 8 Acoustic Inputs: [LowBody, FormantVowel, SpeechMid, ClapLo, ClapHi, Entropy, Crest, DeltaE]
+    const W1 = tf.tensor2d([
+      [-0.6,  1.3, -0.2, -0.4, -0.7], // LowBody
+      [-0.9,  1.6, -0.3, -0.5, -0.8], // FormantVowel (Speech)
+      [-0.4,  1.1, -0.2, -0.3, -0.6], // SpeechMid
+      [-0.2, -1.2,  1.8,  2.1,  2.3], // ClapLo (Impulse)
+      [-0.3, -1.4,  1.9,  2.2,  2.4], // ClapHi (Snap)
+      [-0.5, -0.8,  1.4,  1.6,  1.8], // Entropy (Spectral Flatness)
+      [-0.4, -0.7,  1.6,  1.9,  2.1], // Crest Factor
+      [-0.6, -0.9,  1.8,  2.3,  2.5]  // DeltaE (Instantaneous Transient Spike)
+    ]);
+    const B1 = tf.tensor1d([-0.2, 0.2, -0.4, -0.4, -0.5]);
+
+    // 5 Hidden Nodes -> 3 Output Classes: [Speech, Ambient, Clap]
+    const W2 = tf.tensor2d([
+      [ 1.8, -0.6, -1.6],
+      [ 2.2, -0.7, -1.9],
+      [-2.1, -1.5,  2.8],
+      [-2.3, -1.7,  3.2],
+      [-2.5, -1.9,  3.5]
+    ]);
+    const B2 = tf.tensor1d([0.1, 0.2, -0.3]);
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -193,7 +216,7 @@
 
             <div class="meter-container" id="meter-box-${index}">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="80% AI Confidence Cutoff"></div>
+              <div class="meter-threshold-line" title="75% Clap Match Threshold"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -238,66 +261,7 @@
       }
     }
 
-    // --- BUILD IN-MEMORY TENSORFLOW.JS NEURAL CLASSIFIER ---
-    function buildAcousticClassifier() {
-      // 8 acoustic input features -> 12 hidden units -> 3 output classes:
-      // Class 0: Voice/Speech
-      // Class 1: Ambient Background
-      // Class 2: Percussive Hand Clap
-      const model = tf.sequential();
-      
-      model.add(tf.layers.dense({
-        units: 12,
-        activation: 'relu',
-        inputShape: [8],
-        // Pre-tuned acoustic weights separating human vowels from percussive transients
-        weights: [
-          tf.tensor2d([
-            // LowBody, FormantVowel, SpeechHi, ClapLo, ClapHi, Entropy, Crest, DeltaE
-            [-0.8,  1.4, -0.6, -0.2, -0.4, -0.8, -0.5, -0.7],  // Speech node 1
-            [-1.1,  1.8, -0.5, -0.3, -0.2, -1.0, -0.6, -0.8],  // Speech node 2
-            [ 1.5, -0.4, -0.8, -0.5, -0.6,  0.9, -0.9, -1.2],  // Ambient hum node 1
-            [ 0.9, -0.3, -0.7, -0.4, -0.5,  0.8, -0.8, -1.0],  // Ambient hum node 2
-            [-0.3, -1.6, -0.8,  1.8,  2.2,  1.4,  2.0,  2.4],  // Clap impulse node 1
-            [-0.4, -1.8, -0.9,  1.9,  2.4,  1.5,  2.2,  2.5],  // Clap impulse node 2
-            [-0.2, -1.2, -0.5,  1.5,  1.9,  1.2,  1.7,  2.1],  // Clap impulse node 3
-            [-0.5, -1.4, -0.7,  1.7,  2.0,  1.3,  1.9,  2.2],  // Clap impulse node 4
-            [ 0.2,  0.8, -0.4, -0.2, -0.3, -0.5, -0.3, -0.5],  // Voice transition
-            [-0.1, -1.1, -0.4,  1.4,  1.8,  1.1,  1.5,  1.9],  // Snap / transient
-            [ 0.6, -0.2, -0.5, -0.3, -0.4,  0.6, -0.6, -0.8],  // Static background
-            [-0.2, -1.5, -0.6,  1.6,  2.1,  1.3,  1.8,  2.3]   // High clap overtone
-          ], [8, 12]),
-          tf.tensor1d([-0.2, -0.2, 0.1, 0.1, -0.5, -0.5, -0.4, -0.4, -0.1, -0.4, 0.1, -0.4])
-        ]
-      }));
-
-      model.add(tf.layers.dense({
-        units: 3,
-        activation: 'softmax',
-        weights: [
-          tf.tensor2d([
-            // 12 hidden units mapped to [Voice, Ambient, Clap]
-            [ 1.8, -0.5, -1.5],
-            [ 2.0, -0.6, -1.8],
-            [-0.8,  2.2, -1.6],
-            [-0.7,  1.9, -1.4],
-            [-2.2, -1.8,  3.2],
-            [-2.4, -2.0,  3.5],
-            [-1.9, -1.5,  2.8],
-            [-2.1, -1.7,  3.0],
-            [ 1.4, -0.4, -1.2],
-            [-1.8, -1.4,  2.7],
-            [-0.6,  1.8, -1.3],
-            [-2.0, -1.6,  2.9]
-          ], [12, 3]),
-          tf.tensor1d([0.1, 0.2, -0.3])
-        ]
-      }));
-
-      return model;
-    }
-
-    // --- SENSOR & NEURAL AUDIO HANDLER ---
+    // --- NEURAL NETWORK AUDIO PROCESSOR ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       const meterBox = document.getElementById(`meter-box-${index}`);
@@ -315,23 +279,18 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Standalone Neural Classifier (Zero External Downloads)
+      // 1. Standalone Direct TF Tensor Forward-Pass
       if (mode === "neural-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
-          feedback.innerHTML = `<span class="ai-badge">TF.JS</span> <span>Compiling neural net tensor...</span>`;
-
-          if (!neuralModel) {
-            neuralModel = buildAcousticClassifier();
-          }
+          feedback.innerHTML = `<span class="ai-badge">AI</span> <span>Connecting microphone...</span>`;
 
           if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
 
+          // Compatible audio stream request
           if (!micStream) {
-            micStream = await navigator.mediaDevices.getUserMedia({ 
-              audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-            });
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           }
 
           const source = audioCtx.createMediaStreamSource(micStream);
@@ -343,48 +302,39 @@
           const freqData = new Uint8Array(analyser.frequencyBinCount);
           const timeData = new Uint8Array(analyser.fftSize);
 
-          let prevTotalEnergy = 0;
+          let prevEnergy = 0;
           let lastTrigger = 0;
 
-          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for hand claps only...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps (shouting/noise ignored)...</span>`;
 
           function runInference() {
             analyser.getByteFrequencyData(freqData);
             analyser.getByteTimeDomainData(timeData);
 
-            // 1. Extract 8 Normalized Acoustic Features:
-            
-            // Low Body (100Hz - 400Hz): Bins 1 - 4
+            // Extract 8 normalized features:
             let lowBody = 0;
             for (let i = 1; i <= 4; i++) lowBody += freqData[i];
             lowBody = (lowBody / 4) / 255;
 
-            // Formant Vowel (400Hz - 1200Hz): Bins 5 - 13
             let formantVowel = 0;
             for (let i = 5; i <= 13; i++) formantVowel += freqData[i];
             formantVowel = (formantVowel / 9) / 255;
 
-            // Speech High Harmonic (1200Hz - 2000Hz): Bins 14 - 22
-            let speechHi = 0;
-            for (let i = 14; i <= 22; i++) speechHi += freqData[i];
-            speechHi = (speechHi / 9) / 255;
+            let speechMid = 0;
+            for (let i = 14; i <= 22; i++) speechMid += freqData[i];
+            speechMid = (speechMid / 9) / 255;
 
-            // Clap Transient Lower (2000Hz - 3800Hz): Bins 23 - 42
             let clapLo = 0;
             for (let i = 23; i <= 42; i++) clapLo += freqData[i];
             clapLo = (clapLo / 20) / 255;
 
-            // Clap Transient Upper (3800Hz - 6000Hz): Bins 43 - 68
             let clapHi = 0;
             for (let i = 43; i <= 68; i++) clapHi += freqData[i];
             clapHi = (clapHi / 26) / 255;
 
-            // Spectral Entropy (Energy spread across upper spectrum)
             const entropy = Math.min(1.0, (clapLo + clapHi) / (formantVowel + 0.05));
 
-            // Crest Factor (Peak excursion vs RMS from time domain)
-            let peak = 0;
-            let sumSq = 0;
+            let peak = 0, sumSq = 0;
             for (let i = 0; i < timeData.length; i++) {
               const dev = Math.abs(timeData[i] - 128);
               if (dev > peak) peak = dev;
@@ -393,42 +343,38 @@
             const rms = Math.sqrt(sumSq / timeData.length) || 1;
             const crest = Math.min(1.0, (peak / rms) / 8);
 
-            // Energy Rise Velocity (Transient Delta)
-            const currentTotal = clapLo + clapHi;
-            const deltaE = Math.max(0, Math.min(1.0, (currentTotal - prevTotalEnergy) * 4));
-            prevTotalEnergy = currentTotal * 0.85;
+            const curEnergy = clapLo + clapHi;
+            const deltaE = Math.max(0, Math.min(1.0, (curEnergy - prevEnergy) * 4));
+            prevEnergy = curEnergy * 0.85;
 
-            // 2. Feed 8-Feature Vector to Neural Network via tf.tidy()
-            const probabilities = tf.tidy(() => {
-              const inputTensor = tf.tensor2d([[
-                lowBody, formantVowel, speechHi, clapLo, clapHi, entropy, crest, deltaE
-              ]]);
-              return neuralModel.predict(inputTensor).dataSync();
+            // Direct Neural MatMul Forward-Pass
+            const probs = tf.tidy(() => {
+              const X = tf.tensor2d([[lowBody, formantVowel, speechMid, clapLo, clapHi, entropy, crest, deltaE]]);
+              const H = tf.relu(tf.add(tf.matMul(X, W1), B1));
+              return tf.softmax(tf.add(tf.matMul(H, W2), B2)).dataSync();
             });
 
-            // Model Output: [P(Voice), P(Ambient), P(Clap)]
-            const pVoice = probabilities[0];
-            const pAmbient = probabilities[1];
-            const pClap = probabilities[2];
+            const pVoice = probs[0];
+            const pClap = probs[2];
 
-            // Update UI Meter with Clap Probability
+            // Render prediction probabilities
             if (meterBar) {
-              const clapPct = Math.round(pClap * 100);
-              meterBar.style.width = `${clapPct}%`;
-              meterBar.style.background = pClap > 0.80 ? '#10b981' : (pVoice > 0.60 ? '#ef4444' : '#38bdf8');
+              const pct = Math.round(pClap * 100);
+              meterBar.style.width = `${pct}%`;
+              meterBar.style.background = pClap > 0.75 ? '#10b981' : (pVoice > 0.60 ? '#ef4444' : '#38bdf8');
             }
 
             const now = Date.now();
 
-            // AI Decision: Trigger strictly when Clap probability > 80% and Voice probability < 25%
-            if (pClap > 0.80 && pVoice < 0.25 && (now - lastTrigger > 1100)) {
+            // Trigger when Clap probability crosses 75% and Voice probability is low
+            if (pClap > 0.75 && pVoice < 0.30 && (now - lastTrigger > 1100)) {
               lastTrigger = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Hand Clap Confirmed (${Math.round(pClap * 100)}%)</span>`;
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Verified (${Math.round(pClap * 100)}%)</span>`;
               toggleDevice(index);
 
               setTimeout(() => {
                 if (feedback) {
-                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for hand claps only...</span>`;
+                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps...</span>`;
                 }
               }, 900);
             }
@@ -439,7 +385,7 @@
 
         } catch (err) {
           console.error(err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Mic access required.</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Engine error: ${err.message || err}</span>`;
         }
       }
 
