@@ -6,7 +6,6 @@
   <title>NARI Smart Switch</title>
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
   <style>
     :root {
       --bg: #090d16;
@@ -24,7 +23,7 @@
     
     header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--card-border); }
     .brand { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
-    .btn-add-top { background: var(--primary); color: white; border: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; }
+    .btn-add-top { background: var(--primary); color: white; border: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; box-shadow: 0 4px 12px rgba(2,132,199,0.4); }
 
     .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 18px; }
     
@@ -38,13 +37,14 @@
       justify-content: space-between; 
       box-shadow: 0 10px 25px -5px rgba(0,0,0,0.45); 
       cursor: pointer; 
-      transition: border-color 0.2s; 
+      transition: border-color 0.2s, transform 0.15s; 
       user-select: none;
     }
+    .card:hover { border-color: rgba(56, 189, 248, 0.3); }
     
     .card-main { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     .dev-left { display: flex; align-items: center; gap: 14px; }
-    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); }
+    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); transition: 0.3s; }
     .icon-box.active { background: rgba(16, 185, 129, 0.18); color: var(--success); }
     .dev-info h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 2px; }
     .dev-info p { font-size: 0.76rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
@@ -53,7 +53,7 @@
     .dev-actions { display: flex; align-items: center; gap: 10px; }
     .btn-toggle { min-width: 65px; padding: 10px 16px; border-radius: 12px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
     .btn-off { background: #334155; color: #94a3b8; }
-    .btn-on { background: var(--success); color: white; }
+    .btn-on { background: var(--success); color: white; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
     .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.2rem; cursor: pointer; padding: 6px; }
 
     .sensor-drawer { 
@@ -97,6 +97,7 @@
 
   <div class="container" id="deviceList"></div>
 
+  <!-- Add Device Modal -->
   <div class="modal-overlay" id="pairModal">
     <div class="modal-box">
       <div class="modal-header">
@@ -132,7 +133,7 @@
       list.innerHTML = "";
 
       if (devices.length === 0) {
-        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No switches added.<br>Tap <b>+</b> to pair one.</p></div>`;
+        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No switches added.<br>Tap <b>+</b> at the top right to pair one.</p></div>`;
         return;
       }
 
@@ -173,7 +174,7 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="clap">Acoustic: Clap / Snap Detector</option>
+              <option value="clap">Acoustic: Double Clap Filter Engine</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
@@ -221,7 +222,7 @@
       }
     }
 
-    // --- INSTANT ACOUSTIC & SENSOR HANDLER ---
+    // --- MULTI-FILTER DOUBLE CLAP ENGINE & SENSORS ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       
@@ -236,10 +237,10 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Instant Acoustic Transient (Clap / Snap) Detector
+      // 1. Multi-Filter Double Clap Engine
       if (mode === "clap") {
         try {
-          feedback.querySelector("span").innerText = "Requesting mic access...";
+          feedback.querySelector("span").innerText = "Initializing audio engine...";
           
           if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -251,41 +252,78 @@
           }
 
           const source = audioCtx.createMediaStreamSource(micStream);
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 512;
-          source.connect(analyser);
 
-          feedback.querySelector("span").innerText = "Listening for claps...";
+          // High-Pass Filter: Cuts out voices, hums, and low background noise below 2.2 kHz
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = "highpass";
+          filter.frequency.setValueAtTime(2200, audioCtx.currentTime);
+
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(filter);
+          filter.connect(analyser);
+
+          feedback.querySelector("span").innerText = "Listening for DOUBLE CLAP (Clap..Clap)...";
 
           const buffer = new Uint8Array(analyser.fftSize);
-          let lastClapTime = 0;
+          let firstClapTime = 0;
+          let isWaitingForSecond = false;
+          let armed = true;
 
-          function detectClap() {
+          function processAcoustic() {
             analyser.getByteTimeDomainData(buffer);
 
-            // Compute peak excursion amplitude from center point 128
-            let maxPeak = 0;
+            // Compute peak transient excursion
+            let peak = 0;
             for (let i = 0; i < buffer.length; i++) {
-              const excursion = Math.abs(buffer[i] - 128);
-              if (excursion > maxPeak) maxPeak = excursion;
+              const diff = Math.abs(buffer[i] - 128);
+              if (diff > peak) peak = diff;
             }
 
-            // High amplitude spike characteristic of a hand clap
-            if (maxPeak > 55) {
-              const now = Date.now();
-              // 600ms cooldown between claps
-              if (now - lastClapTime > 600) {
-                lastClapTime = now;
-                feedback.querySelector("span").innerText = "Clap detected!";
-                toggleDevice(index);
-                setTimeout(() => {
-                  if (feedback) feedback.querySelector("span").innerText = "Listening for claps...";
-                }, 400);
+            const now = Date.now();
+
+            // Threshold: Sharp acoustic transient above cutoff
+            if (peak > 45 && armed) {
+              armed = false;
+
+              if (!isWaitingForSecond) {
+                isWaitingForSecond = true;
+                firstClapTime = now;
+                feedback.querySelector("span").innerText = "First clap! Clap once more...";
+                
+                // 180ms lockout prevents the reverb/ringing of the 1st clap from acting as the 2nd
+                setTimeout(() => { armed = true; }, 180);
+              } else {
+                const delta = now - firstClapTime;
+                // Double-clap window: 180ms to 850ms
+                if (delta >= 180 && delta <= 850) {
+                  feedback.querySelector("span").innerText = "✓ Double Clap Confirmed!";
+                  toggleDevice(index);
+                  
+                  isWaitingForSecond = false;
+                  setTimeout(() => {
+                    armed = true;
+                    if (feedback) feedback.querySelector("span").innerText = "Listening for DOUBLE CLAP...";
+                  }, 1200);
+                }
               }
             }
-            animFrame = requestAnimationFrame(detectClap);
+
+            // Timeout: Reset if second clap doesn't arrive within 850ms
+            if (isWaitingForSecond && (now - firstClapTime > 850)) {
+              isWaitingForSecond = false;
+              armed = true;
+              feedback.querySelector("span").innerText = "Listening for DOUBLE CLAP...";
+            }
+
+            // Re-arm when quiet
+            if (!armed && peak < 15 && !isWaitingForSecond) {
+              armed = true;
+            }
+
+            animFrame = requestAnimationFrame(processAcoustic);
           }
-          detectClap();
+          processAcoustic();
 
         } catch (err) {
           alert("Microphone permission denied or unavailable.");
