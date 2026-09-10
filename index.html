@@ -6,10 +6,6 @@
   <title>NARI Smart Switch</title>
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  
-  <!-- TensorFlow.js and Speech Commands (YAMNet lightweight browser engine) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.4/dist/speech-commands.min.js"></script>
 
   <style>
     :root {
@@ -28,11 +24,10 @@
     
     header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--card-border); }
     .brand { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
-    .btn-add-top { background: var(--primary); color: white; border: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; box-shadow: 0 4px 12px rgba(2,132,199,0.4); }
+    .btn-add-top { background: var(--primary); color: white; border: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; }
 
     .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 18px; }
     
-    /* Square Type Card with Rounded Edges */
     .card { 
       background: var(--card-bg); 
       border: 1px solid var(--card-border); 
@@ -43,14 +38,13 @@
       justify-content: space-between; 
       box-shadow: 0 10px 25px -5px rgba(0,0,0,0.45); 
       cursor: pointer; 
-      transition: border-color 0.2s, transform 0.15s; 
+      transition: border-color 0.2s; 
       user-select: none;
     }
-    .card:hover { border-color: rgba(56, 189, 248, 0.3); }
     
     .card-main { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     .dev-left { display: flex; align-items: center; gap: 14px; }
-    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); transition: 0.3s; }
+    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); }
     .icon-box.active { background: rgba(16, 185, 129, 0.18); color: var(--success); }
     .dev-info h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 2px; }
     .dev-info p { font-size: 0.76rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
@@ -59,10 +53,9 @@
     .dev-actions { display: flex; align-items: center; gap: 10px; }
     .btn-toggle { min-width: 65px; padding: 10px 16px; border-radius: 12px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
     .btn-off { background: #334155; color: #94a3b8; }
-    .btn-on { background: var(--success); color: white; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
+    .btn-on { background: var(--success); color: white; }
     .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.2rem; cursor: pointer; padding: 6px; }
 
-    /* Expandable Sensor Drawer */
     .sensor-drawer { 
       margin-top: 14px; 
       padding-top: 14px; 
@@ -70,7 +63,6 @@
       display: none; 
       flex-direction: column; 
       gap: 10px; 
-      cursor: default; 
     }
     .sensor-drawer.open { display: flex; }
     .drawer-title { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
@@ -88,7 +80,6 @@
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
     .sensor-feedback { font-size: 0.76rem; color: #fbbf24; display: none; align-items: center; gap: 6px; }
 
-    /* Modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
     .modal-box { background: #141b2d; border: 1px solid var(--card-border); border-radius: 22px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
@@ -106,7 +97,6 @@
 
   <div class="container" id="deviceList"></div>
 
-  <!-- Add Device Modal -->
   <div class="modal-overlay" id="pairModal">
     <div class="modal-box">
       <div class="modal-header">
@@ -122,7 +112,9 @@
   <script>
     let devices = JSON.parse(localStorage.getItem("nari_devices") || "[]");
     let openDrawerIndex = null;
-    let tfRecognizer = null;
+    let audioCtx = null;
+    let micStream = null;
+    let animFrame = null;
     let diyIntervals = {};
 
     function save() {
@@ -140,7 +132,7 @@
       list.innerHTML = "";
 
       if (devices.length === 0) {
-        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No switches added.<br>Tap <b>+</b> at the top right to pair one.</p></div>`;
+        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No switches added.<br>Tap <b>+</b> to pair one.</p></div>`;
         return;
       }
 
@@ -177,18 +169,18 @@
           
           <div class="sensor-drawer ${isOpen ? 'open' : ''}">
             <div class="drawer-title">
-              <i class="fa-solid fa-brain"></i> Trigger & AI Modes
+              <i class="fa-solid fa-brain"></i> Trigger & Audio Modes
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="yamnet">AI: YAMNet Audio Classifier (Clap/Snap)</option>
+              <option value="clap">Acoustic: Clap / Snap Detector</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker">DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
             <div class="sensor-feedback" id="feedback-${index}">
-              <i class="fa-solid fa-satellite-dish fa-fade"></i> <span>AI listening...</span>
+              <i class="fa-solid fa-microphone-lines fa-fade"></i> <span>Ready</span>
             </div>
           </div>
         `;
@@ -229,16 +221,14 @@
       }
     }
 
-    // --- YAMNET & SENSOR HANDLER ---
+    // --- INSTANT ACOUSTIC & SENSOR HANDLER ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       
-      // Stop running services
+      // Stop running loops and audio processors
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
-      if (tfRecognizer && tfRecognizer.isListening()) {
-        await tfRecognizer.stopListening();
-      }
+      if (animFrame) cancelAnimationFrame(animFrame);
 
       if (mode === "none") {
         if (feedback) feedback.style.display = "none";
@@ -246,43 +236,66 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. TensorFlow YAMNet Audio Classifier Mode
-      if (mode === "yamnet") {
+      // 1. Instant Acoustic Transient (Clap / Snap) Detector
+      if (mode === "clap") {
         try {
-          if (!tfRecognizer) {
-            feedback.querySelector("span").innerText = "Loading TFJS Audio Model...";
-            tfRecognizer = speechCommands.create("BROWSER_FFT");
-            await tfRecognizer.ensureModelLoaded();
+          feedback.querySelector("span").innerText = "Requesting mic access...";
+          
+          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+          
+          if (!micStream) {
+            micStream = await navigator.mediaDevices.getUserMedia({ 
+              audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+            });
           }
 
-          feedback.querySelector("span").innerText = "AI Listening for Claps/Audio spikes...";
-          
-          let lastTrigger = 0;
-          tfRecognizer.listen(result => {
-            // Find class with highest probability
-            const scores = result.scores;
-            let maxScore = 0;
-            for (let i = 0; i < scores.length; i++) {
-              if (scores[i] > maxScore) maxScore = scores[i];
+          const source = audioCtx.createMediaStreamSource(micStream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+
+          feedback.querySelector("span").innerText = "Listening for claps...";
+
+          const buffer = new Uint8Array(analyser.fftSize);
+          let lastClapTime = 0;
+
+          function detectClap() {
+            analyser.getByteTimeDomainData(buffer);
+
+            // Compute peak excursion amplitude from center point 128
+            let maxPeak = 0;
+            for (let i = 0; i < buffer.length; i++) {
+              const excursion = Math.abs(buffer[i] - 128);
+              if (excursion > maxPeak) maxPeak = excursion;
             }
 
-            // High-confidence audio trigger with 1.2s cooldown
-            if (maxScore > 0.75 && Date.now() - lastTrigger > 1200) {
-              lastTrigger = Date.now();
-              toggleDevice(index);
+            // High amplitude spike characteristic of a hand clap
+            if (maxPeak > 55) {
+              const now = Date.now();
+              // 600ms cooldown between claps
+              if (now - lastClapTime > 600) {
+                lastClapTime = now;
+                feedback.querySelector("span").innerText = "Clap detected!";
+                toggleDevice(index);
+                setTimeout(() => {
+                  if (feedback) feedback.querySelector("span").innerText = "Listening for claps...";
+                }, 400);
+              }
             }
-          }, {
-            includeSpectrogram: false,
-            probabilityThreshold: 0.70,
-            overlapFactor: 0.5
-          });
+            animFrame = requestAnimationFrame(detectClap);
+          }
+          detectClap();
+
         } catch (err) {
-          alert("Microphone permission required for AI Audio detection.");
+          alert("Microphone permission denied or unavailable.");
+          if (feedback) feedback.style.display = "none";
         }
       }
 
       // 2. Shake Gesture
       else if (mode === "shake") {
+        feedback.querySelector("span").innerText = "Shake phone to toggle";
         let lastShake = 0;
         window.ondevicemotion = (e) => {
           const acc = e.accelerationIncludingGravity;
@@ -297,6 +310,7 @@
 
       // 3. Wrist Flick Gesture
       else if (mode === "wrist") {
+        feedback.querySelector("span").innerText = "Flick wrist to toggle";
         let lastFlick = 0;
         window.ondevicemotion = (e) => {
           const acc = e.acceleration;
@@ -311,6 +325,7 @@
 
       // 4. Voice Commands
       else if (mode === "voice") {
+        feedback.querySelector("span").innerText = "Say 'ON' or 'OFF'...";
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return alert("Speech recognition not supported in this browser.");
         const recognizer = new SpeechRecognition();
@@ -326,6 +341,7 @@
 
       // 5. DIY Auto-Strobe
       else if (mode === "flicker") {
+        feedback.querySelector("span").innerText = "Strobing every 500ms...";
         let st = false;
         diyIntervals[index] = setInterval(() => {
           st = !st;
