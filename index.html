@@ -6,9 +6,6 @@
   <title>NARI Smart Switch</title>
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  
-  <!-- Standalone Core TensorFlow.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
     :root {
@@ -82,10 +79,10 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* Live Acoustic Energy Bar */
+    /* Live Spectral Energy Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
     .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.04s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 45%; width: 2px; background: #ef4444; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -180,20 +177,20 @@
           
           <div class="sensor-drawer ${isOpen ? 'open' : ''}">
             <div class="drawer-title">
-              <i class="fa-solid fa-brain"></i> Neural AI & Gesture Modes
+              <i class="fa-solid fa-brain"></i> Acoustic & Gesture Modes
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
-              <option value="neural-spectrogram" ${currentMode === 'neural-spectrogram' ? 'selected' : ''}>Spectrogram AI: Double Clap (👏 .. 👏)</option>
+              <option value="spectral-double-clap" ${currentMode === 'spectral-double-clap' ? 'selected' : ''}>Acoustic Spectral AI: Double Clap (👏 .. 👏)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'neural-spectrogram' ? 'block' : 'none'};">
+            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'spectral-double-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="Clap Threshold"></div>
+              <div class="meter-threshold-line" title="Acoustic Trigger Line"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -254,7 +251,7 @@
       }
     }
 
-    // --- TEMPORAL SPECTROGRAM ENGINE WITH DIRECT PEAK-THRESHOLD SYNC ---
+    // --- SPECTRAL CENTROID & ACOUSTIC IMPULSE ENGINE ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -275,7 +272,7 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      if (mode === "neural-spectrogram") {
+      if (mode === "spectral-double-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
           feedback.innerHTML = `<span class="ai-badge">AI</span> <span>Connecting microphone...</span>`;
@@ -284,13 +281,15 @@
           if (audioCtx.state === 'suspended') await audioCtx.resume();
 
           if (!micStream) {
-            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            micStream = await navigator.mediaDevices.getUserMedia({ 
+              audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+            });
           }
 
           const source = audioCtx.createMediaStreamSource(micStream);
           const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 256;
-          analyser.smoothingTimeConstant = 0.08;
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.1;
           source.connect(analyser);
 
           const freqData = new Uint8Array(analyser.frequencyBinCount);
@@ -300,83 +299,105 @@
           let isWaitingForSecond = false;
           let armed = true;
 
-          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
 
-          function processAudio() {
+          function evaluateAcoustics() {
             analyser.getByteFrequencyData(freqData);
             analyser.getByteTimeDomainData(timeData);
 
-            // 1. Peak waveform excursion
+            // 1. Peak waveform excursion and RMS
             let peak = 0;
+            let sumSquares = 0;
             for (let i = 0; i < timeData.length; i++) {
               const dev = Math.abs(timeData[i] - 128);
               if (dev > peak) peak = dev;
+              sumSquares += dev * dev;
             }
+            const rms = Math.sqrt(sumSquares / timeData.length) || 1;
+            const crestFactor = peak / rms; // High for impulsive clicks/claps (> 4.5)
 
-            // 2. Speech Harmonic Band (200Hz - 900Hz -> bins 2 to 10)
+            // 2. Spectral Centroid (Frequency Center of Mass)
+            let weightedSum = 0;
+            let totalMagnitude = 0;
+            for (let i = 0; i < freqData.length; i++) {
+              const mag = freqData[i];
+              weightedSum += i * mag;
+              totalMagnitude += mag;
+            }
+            const centroidBin = totalMagnitude > 0 ? (weightedSum / totalMagnitude) : 0;
+            // Bin to Hz: bin * (sampleRate / fftSize) => bin * (44100 / 512) ~ bin * 86 Hz
+            const centroidHz = centroidBin * (audioCtx.sampleRate / analyser.fftSize);
+
+            // 3. Energy in Speech Band (< 900 Hz) vs Clap Band (1.5 kHz - 4.5 kHz)
             let speechBand = 0;
             for (let i = 2; i <= 10; i++) speechBand += freqData[i];
             speechBand /= 9;
 
-            // 3. Clap Transient Band (1800Hz - 4800Hz -> bins 20 to 55)
             let clapBand = 0;
-            for (let i = 20; i <= 55; i++) clapBand += freqData[i];
-            clapBand /= 36;
+            for (let i = 20; i <= 60; i++) clapBand += freqData[i];
+            clapBand /= 41;
 
-            // Live visual feedback: red line is at 45% (peak ~ 22)
+            // Live visual feedback: normalized across 0 to 50
             const visualPct = Math.min(100, (peak / 50) * 100);
             if (meterBar) {
               meterBar.style.width = `${visualPct}%`;
-              meterBar.style.background = isWaitingForSecond ? '#f59e0b' : (peak > 22 ? '#10b981' : '#38bdf8');
+              meterBar.style.background = isWaitingForSecond ? '#f59e0b' : (peak > 25 ? '#10b981' : '#38bdf8');
             }
 
             const now = Date.now();
 
-            // TRIGGER RULE: Peak crosses red line (>22) AND sound is percussive, not continuous speech
-            const isPercussive = peak > 22 && (clapBand > speechBand * 0.85);
+            // ACOUSTIC CLASSIFIER RULES:
+            // - Peak amplitude crosses minimum threshold (> 22)
+            // - Crest factor is sharp (> 4.2)
+            // - Spectral centroid is in high frequency zone (> 1800 Hz)
+            // - Not dominated by vocal formant energy
+            const isClapAcoustic = peak > 22 && 
+                                   crestFactor > 4.2 && 
+                                   centroidHz > 1700 && 
+                                   (clapBand > speechBand * 0.9);
 
-            if (isPercussive && armed) {
+            if (isClapAcoustic && armed) {
               armed = false;
 
               if (!isWaitingForSecond) {
-                // 1st Clap Confirmed
+                // First clap verified
                 isWaitingForSecond = true;
                 firstClapTime = now;
                 feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more (👏)...</span>`;
                 
-                // 160ms deadband so 1st clap's reverb doesn't trigger 2nd clap
-                setTimeout(() => { armed = true; }, 160);
+                // 140ms lockout so acoustic reverberation is not counted as second clap
+                setTimeout(() => { armed = true; }, 140);
               } else {
-                // 2nd Clap Confirmed within 160ms - 900ms window
+                // Second clap verified within 140ms - 800ms
                 const delta = now - firstClapTime;
-                if (delta >= 160 && delta <= 900) {
+                if (delta >= 140 && delta <= 800) {
                   feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Confirmed!</span>`;
                   toggleDevice(index);
 
                   isWaitingForSecond = false;
                   setTimeout(() => {
                     armed = true;
-                    if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+                    if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
                   }, 1200);
                 }
               }
             }
 
-            // Timeout reset if no second clap arrives within 900ms
-            if (isWaitingForSecond && (now - firstClapTime > 900)) {
+            // Timeout reset if second clap does not arrive within 800ms
+            if (isWaitingForSecond && (now - firstClapTime > 800)) {
               isWaitingForSecond = false;
               armed = true;
-              feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+              feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
             }
 
-            // Re-arm when quiet
+            // Re-arm when room drops back to quiet
             if (!armed && peak < 12 && !isWaitingForSecond) {
               armed = true;
             }
 
-            animFrame = requestAnimationFrame(processAudio);
+            animFrame = requestAnimationFrame(evaluateAcoustics);
           }
-          processAudio();
+          evaluateAcoustics();
 
         } catch (err) {
           console.error(err);
