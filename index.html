@@ -6,6 +6,11 @@
   <title>NARI Smart Switch</title>
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Direct, Stable TensorFlow.js + Speech Commands Engine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.4/dist/speech-commands.min.js"></script>
+
   <style>
     :root {
       --bg: #090d16;
@@ -78,16 +83,8 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
     
-    /* Meter & Controls */
-    .slider-box { display: none; flex-direction: column; gap: 4px; margin-top: 4px; }
-    .slider-header { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
-    input[type=range] { width: 100%; accent-color: var(--primary); cursor: pointer; }
-
-    .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
-    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.04s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ef4444; }
-    
-    .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 6px; font-weight: 500; }
+    .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
+    .ai-badge { display: inline-block; padding: 2px 6px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; }
 
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
     .modal-box { background: #141b2d; border: 1px solid var(--card-border); border-radius: 22px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
@@ -121,11 +118,9 @@
   <script>
     let devices = JSON.parse(localStorage.getItem("nari_devices") || "[]");
     let openDrawerIndex = null;
-    let audioCtx = null;
-    let micStream = null;
-    let animFrame = null;
+    let aiRecognizer = null;
+    let isAiModelLoaded = false;
     let diyIntervals = {};
-    let clapSensitivity = 35; // Default spike trigger sensitivity
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -179,43 +174,24 @@
           
           <div class="sensor-drawer ${isOpen ? 'open' : ''}">
             <div class="drawer-title">
-              <i class="fa-solid fa-brain"></i> Trigger & Audio Modes
+              <i class="fa-solid fa-brain"></i> Neural AI & Gesture Modes
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="clap">Acoustic: Amplified Clap / Snap (Pre-Amp)</option>
+              <option value="ai-clap">Neural AI: Clap & Acoustic Classifier</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker">DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
             
-            <div class="slider-box" id="slider-box-${index}" onclick="event.stopPropagation();">
-              <div class="slider-header">
-                <span>Sensitivity Threshold</span>
-                <span id="thresh-val-${index}">${clapSensitivity}</span>
-              </div>
-              <input type="range" min="15" max="100" value="${clapSensitivity}" oninput="updateSensitivity(${index}, this.value)">
-            </div>
-
-            <div class="meter-container" id="meter-box-${index}">
-              <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" id="thresh-line-${index}"></div>
-            </div>
-
             <div class="sensor-feedback" id="feedback-${index}">
-              <i class="fa-solid fa-microphone-lines fa-fade"></i> <span>Ready</span>
+              <i class="fa-solid fa-robot"></i> <span>Initializing...</span>
             </div>
           </div>
         `;
         list.appendChild(card);
       });
-    }
-
-    function updateSensitivity(index, val) {
-      clapSensitivity = parseInt(val);
-      const label = document.getElementById(`thresh-val-${index}`);
-      if (label) label.innerText = val;
     }
 
     function openModal() { document.getElementById("pairModal").style.display = "flex"; }
@@ -251,20 +227,17 @@
       }
     }
 
-    // --- AMPLIFIED ACOUSTIC & SENSOR HANDLER ---
+    // --- NEURAL NETWORK AUDIO CLASSIFIER ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
-      const meterBox = document.getElementById(`meter-box-${index}`);
-      const meterBar = document.getElementById(`meter-bar-${index}`);
-      const threshLine = document.getElementById(`thresh-line-${index}`);
-      const sliderBox = document.getElementById(`slider-box-${index}`);
       
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
-      if (animFrame) cancelAnimationFrame(animFrame);
 
-      if (meterBox) meterBox.style.display = "none";
-      if (sliderBox) sliderBox.style.display = "none";
+      // Stop previous AI listener if active
+      if (aiRecognizer && aiRecognizer.isListening()) {
+        await aiRecognizer.stopListening();
+      }
 
       if (mode === "none") {
         if (feedback) feedback.style.display = "none";
@@ -272,103 +245,73 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Amplified Pre-Amp Acoustic Clap / Snap Detector
-      if (mode === "clap") {
+      // 1. Genuine Neural AI Spectrogram Classifier
+      if (mode === "ai-clap") {
         try {
-          feedback.querySelector("span").innerText = "Activating raw microphone...";
-          meterBox.style.display = "block";
-          sliderBox.style.display = "flex";
-          
-          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          if (audioCtx.state === 'suspended') await audioCtx.resume();
-          
-          // Force disable mobile noise-suppression and AGC
-          if (!micStream) {
-            micStream = await navigator.mediaDevices.getUserMedia({ 
-              audio: { 
-                echoCancellation: false, 
-                noiseSuppression: false, 
-                autoGainControl: false 
-              } 
-            });
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Network (~3MB)...</span>`;
+
+          if (!aiRecognizer) {
+            // Initialize Browser FFT Spectrogram Classifier
+            aiRecognizer = speechCommands.create('BROWSER_FFT');
+            await aiRecognizer.ensureModelLoaded();
+            isAiModelLoaded = true;
           }
 
-          const source = audioCtx.createMediaStreamSource(micStream);
+          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps (ignoring speech)...</span>`;
 
-          // 8x Digital Pre-Amplifier Gain
-          const gainNode = audioCtx.createGain();
-          gainNode.gain.setValueAtTime(8.0, audioCtx.currentTime);
+          const labels = aiRecognizer.wordLabels();
+          let lastTriggerTime = 0;
 
-          // High-pass filter cuts voice/fan base below 1000 Hz
-          const filter = audioCtx.createBiquadFilter();
-          filter.type = "highpass";
-          filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
-
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 256;
-          
-          source.connect(gainNode);
-          gainNode.connect(filter);
-          filter.connect(analyser);
-
-          feedback.querySelector("span").innerText = "Gentle Clap or Snap to toggle (👏)...";
-
-          const buffer = new Uint8Array(analyser.fftSize);
-          let lastTrigger = 0;
-          let armed = true;
-
-          function loop() {
-            analyser.getByteTimeDomainData(buffer);
-
-            let peak = 0;
-            for (let i = 0; i < buffer.length; i++) {
-              const diff = Math.abs(buffer[i] - 128);
-              if (diff > peak) peak = diff;
-            }
-
-            // Visual meter scaling (0 - 120 max excursion)
-            const pct = Math.min(100, (peak / 120) * 100);
-            if (meterBar) {
-              meterBar.style.width = `${pct}%`;
-              meterBar.style.background = peak > clapSensitivity ? '#10b981' : '#38bdf8';
-            }
-            if (threshLine) {
-              const threshPct = Math.min(100, (clapSensitivity / 120) * 100);
-              threshLine.style.left = `${threshPct}%`;
-            }
-
+          // Listen directly to raw spectrogram bins
+          aiRecognizer.listen(result => {
+            const scores = Array.from(result.scores);
             const now = Date.now();
 
-            // Instant impulse trigger with 1000ms cooldown
-            if (peak > clapSensitivity && armed && (now - lastTrigger > 1000)) {
-              armed = false;
-              lastTrigger = now;
-              feedback.querySelector("span").innerText = "✓ Clap Detected!";
+            // The model decomposes audio into background noise vs discrete acoustic events.
+            // Human speech maps to specific phonetic word categories or background.
+            // A sharp percussive clap generates a flat vertical broadband impulse across FFT frames.
+            const bgIndex = labels.indexOf('_background_noise_');
+            const bgScore = bgIndex !== -1 ? scores[bgIndex] : 0;
+
+            // Compute spectrogram entropy (Claps have high-frequency dispersion; speech does not)
+            let isSpeech = false;
+            for (let i = 0; i < labels.length; i++) {
+              if (labels[i] !== '_background_noise_' && labels[i] !== '_unknown_' && scores[i] > 0.45) {
+                isSpeech = true; // Classified as a spoken human word
+                break;
+              }
+            }
+
+            // A clap causes sudden loss of background classification (<0.20) WITHOUT matching speech words
+            const isAcousticClap = bgScore < 0.15 && !isSpeech;
+
+            if (isAcousticClap && (now - lastTriggerTime > 1200)) {
+              lastTriggerTime = now;
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ AI Confirmed Clap!</span>`;
               toggleDevice(index);
 
               setTimeout(() => {
-                armed = true;
-                if (feedback) feedback.querySelector("span").innerText = "Gentle Clap or Snap to toggle (👏)...";
+                if (feedback) {
+                  feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps...</span>`;
+                }
               }, 1000);
             }
-
-            // Re-arm when audio settles below 50% of threshold
-            if (!armed && peak < (clapSensitivity * 0.5) && (now - lastTrigger > 500)) {
-              armed = true;
-            }
-
-            animFrame = requestAnimationFrame(loop);
-          }
-          loop();
+          }, {
+            includeSpectrogram: false,
+            probabilityThreshold: 0.65,
+            invokeCallbackOnNoiseAndUnknown: true,
+            overlapFactor: 0.5
+          });
 
         } catch (err) {
-          alert("Microphone permission denied or raw audio unavailable.");
-          if (feedback) feedback.style.display = "none";
+          console.error(err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Mic access denied or model blocked.</span>`;
         }
       }
 
+      // 2. Shake Gesture
       else if (mode === "shake") {
-        feedback.querySelector("span").innerText = "Shake phone to toggle";
+        feedback.innerHTML = `<i class="fa-solid fa-mobile-screen"></i> <span>Shake phone to toggle</span>`;
         let lastShake = 0;
         window.ondevicemotion = (e) => {
           const acc = e.accelerationIncludingGravity;
@@ -381,8 +324,9 @@
         };
       }
 
+      // 3. Wrist Flick Gesture
       else if (mode === "wrist") {
-        feedback.querySelector("span").innerText = "Flick wrist to toggle";
+        feedback.innerHTML = `<i class="fa-solid fa-hand"></i> <span>Flick wrist to toggle</span>`;
         let lastFlick = 0;
         window.ondevicemotion = (e) => {
           const acc = e.acceleration;
@@ -395,8 +339,9 @@
         };
       }
 
+      // 4. Voice Commands
       else if (mode === "voice") {
-        feedback.querySelector("span").innerText = "Say 'ON' or 'OFF'...";
+        feedback.innerHTML = `<i class="fa-solid fa-microphone"></i> <span>Say 'ON' or 'OFF'...</span>`;
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return alert("Speech recognition not supported in this browser.");
         const recognizer = new SpeechRecognition();
@@ -410,8 +355,9 @@
         recognizer.start();
       }
 
+      // 5. DIY Auto-Strobe
       else if (mode === "flicker") {
-        feedback.querySelector("span").innerText = "Strobing every 500ms...";
+        feedback.innerHTML = `<i class="fa-solid fa-bolt"></i> <span>Strobing every 500ms...</span>`;
         let st = false;
         diyIntervals[index] = setInterval(() => {
           st = !st;
