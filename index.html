@@ -50,10 +50,11 @@
     .dev-info p { font-size: 0.76rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
     .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); display: inline-block; }
     
-    .dev-actions { display: flex; align-items: center; gap: 10px; }
+    .dev-actions { display: flex; align-items: center; gap: 8px; }
     .btn-toggle { min-width: 65px; padding: 10px 16px; border-radius: 12px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
     .btn-off { background: #334155; color: #94a3b8; }
     .btn-on { background: var(--success); color: white; }
+    .btn-share { background: #1e293b; border: 1px solid var(--card-border); color: var(--accent); width: 34px; height: 34px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; }
     .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.2rem; cursor: pointer; padding: 6px; }
 
     .sensor-drawer { 
@@ -199,6 +200,53 @@
     let isTrainingClap = false;
     let clapTrainingBuffer = [];
 
+    // --- AUTO-IMPORT FROM SHARED URL LINK ---
+    function checkUrlPairing() {
+      const params = new URLSearchParams(window.location.search);
+      const addName = params.get('add');
+      const addIp = params.get('ip');
+
+      if (addName && addIp) {
+        const exists = devices.some(d => d.ip === addIp);
+        if (!exists) {
+          devices.push({
+            name: decodeURIComponent(addName),
+            ip: decodeURIComponent(addIp),
+            state: false,
+            mode: "none",
+            voiceOn: "light on",
+            voiceOff: "light off",
+            clapProfile: null,
+            clapCadence: "single"
+          });
+          saveState();
+          alert(`✓ Device "${decodeURIComponent(addName)}" has been added to your control panel!`);
+        }
+        // Clean URL after importing
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
+    function shareDevice(index) {
+      const dev = devices[index];
+      const base = window.location.origin + window.location.pathname;
+      const shareUrl = `${base}?add=${encodeURIComponent(dev.name)}&ip=${encodeURIComponent(dev.ip)}`;
+
+      if (navigator.share) {
+        navigator.share({
+          title: `NARI Switch: ${dev.name}`,
+          text: `Tap this link to add "${dev.name}" to your NARI Smart Home dashboard:`,
+          url: shareUrl
+        }).catch(() => {});
+      } else {
+        navigator.clipboard.writeText(shareUrl).then(() => {
+          alert(`Link copied to clipboard!\n\nSend this link to your family member. When they open it, the switch will automatically be added to their phone.`);
+        }).catch(() => {
+          prompt("Copy this share link and send it to your family member:", shareUrl);
+        });
+      }
+    }
+
     function saveState() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
     }
@@ -267,6 +315,9 @@
             <div class="dev-actions">
               <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" id="btn-toggle-${index}" onclick="event.stopPropagation(); toggleDevice(${index});">
                 ${dev.state ? 'ON' : 'OFF'}
+              </button>
+              <button class="btn-share" onclick="event.stopPropagation(); shareDevice(${index});" title="Share with family member">
+                <i class="fa-solid fa-share-nodes"></i>
               </button>
               <button class="btn-del" onclick="event.stopPropagation(); deleteDevice(${index});">✕</button>
             </div>
@@ -788,6 +839,8 @@
       }
     }
 
+    // Check for auto-import URL params on page load
+    checkUrlPairing();
     render();
   </script>
 </body>
