@@ -124,10 +124,10 @@
     .btn-train-clap.listening { background: #dc2626; animation: pulse 1s infinite alternate; }
     @keyframes pulse { from { opacity: 0.8; } to { opacity: 1.0; } }
 
-    /* Live Spectral Match Bar */
+    /* Responsive Level & Match Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
-    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 75%; width: 2px; background: #ef4444; }
+    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.04s ease-out; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 65%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -274,10 +274,10 @@
               </div>
             </div>
 
-            <!-- Live Spectral Match Bar (Red line = 75% Biometric Match) -->
+            <!-- Live Spectral Match Bar -->
             <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'trained-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="75% Fingerprint Match Cutoff"></div>
+              <div class="meter-threshold-line" title="Biometric Threshold"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -338,14 +338,14 @@
       }
     }
 
-    // --- AUDIO SYSTEM & SPECTRAL FINGERPRINT EXTRACTOR ---
+    // --- RELIABLE AUDIO PIPELINE INITIALIZATION ---
     async function initAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
+      
       if (!micStream) {
-        micStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-        });
+        // Standard user media query without strict destructive hardware flags
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
       if (!analyser) {
         const source = audioCtx.createMediaStreamSource(micStream);
@@ -356,7 +356,6 @@
       }
     }
 
-    // Extracts normalized 16-band spectral fingerprint shape
     function extractFingerprint(freqData, timeData) {
       let peak = 0, sumSq = 0;
       for (let i = 0; i < timeData.length; i++) {
@@ -367,7 +366,6 @@
       const rms = Math.sqrt(sumSq / timeData.length) || 1;
       const crest = peak / rms;
 
-      // Group 256 frequency bins into 16 distinct sub-bands (covering 0Hz to ~11kHz)
       const bands = new Float32Array(16);
       let totalMag = 0;
       for (let b = 0; b < 16; b++) {
@@ -379,7 +377,6 @@
         totalMag += bands[b];
       }
 
-      // Normalize band energy to create an invariant acoustic "fingerprint shape"
       if (totalMag > 0) {
         for (let b = 0; b < 16; b++) bands[b] /= totalMag;
       }
@@ -387,7 +384,6 @@
       return { bands, crest, peak };
     }
 
-    // Vector Cosine Similarity (evaluates spectral shape match from 0.0 to 1.0)
     function computeCosineSimilarity(vecA, vecB) {
       let dot = 0, normA = 0, normB = 0;
       for (let i = 0; i < vecA.length; i++) {
@@ -399,7 +395,7 @@
       return dot / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
-    // --- BIOMETRIC CLAP PROFILE TRAINER ---
+    // --- TRAINING CONTROLLER WITH LIVE RESPONSIVE METER ---
     async function startClapTraining(index) {
       await initAudio();
       isTrainingClap = true;
@@ -407,10 +403,14 @@
 
       const btn = document.getElementById(`btn-train-clap-${index}`);
       const feedback = document.getElementById(`feedback-${index}`);
+      const meterBar = document.getElementById(`meter-bar-${index}`);
+      const meterBox = document.getElementById(`meter-box-${index}`);
+
+      if (meterBox) meterBox.style.display = "block";
       btn.classList.add("listening");
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Clap 1 of 5...`;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Waiting for Clap 1 of 5...`;
       feedback.style.display = "flex";
-      feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">TRAINING</span> <span>Clap your hands naturally 5 times...</span>`;
+      feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">TRAINING</span> <span>Clap 1 now (see blue meter pulse)...</span>`;
 
       const timeData = new Uint8Array(analyser.fftSize);
       const freqData = new Uint8Array(analyser.frequencyBinCount);
@@ -424,37 +424,45 @@
 
         const fp = extractFingerprint(freqData, timeData);
 
-        // Detect a clean transient impulse
-        if (fp.peak > 18 && fp.crest > 3.0 && armed) {
+        // LIVE METER FEEDBACK DURING TRAINING: Confirms mic is active
+        const visualPct = Math.min(100, Math.round((fp.peak / 45) * 100));
+        if (meterBar) {
+          meterBar.style.width = `${visualPct}%`;
+          meterBar.style.background = fp.peak > 14 ? '#10b981' : '#38bdf8';
+        }
+
+        // Sensitive impulse gate: peak > 14 and crest > 2.5
+        if (fp.peak > 14 && fp.crest > 2.5 && armed) {
           armed = false;
           clapTrainingBuffer.push(Array.from(fp.bands));
 
           const count = clapTrainingBuffer.length;
-          btn.innerHTML = `<i class="fa-solid fa-hands-clapping"></i> Clap ${count + 1} of 5...`;
 
-          if (count >= 5) {
-            // Compute centroid average vector
+          if (count < 5) {
+            btn.innerHTML = `<i class="fa-solid fa-hands-clapping"></i> Waiting for Clap ${count + 1} of 5...`;
+            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">CLAP ${count} SAVED</span> <span>Clap again (${count + 1} of 5)...</span>`;
+          } else {
+            // Average the 5 recorded spectral fingerprints
             const profile = new Array(16).fill(0);
             for (let i = 0; i < 5; i++) {
               for (let b = 0; b < 16; b++) profile[b] += clapTrainingBuffer[i][b];
             }
             for (let b = 0; b < 16; b++) profile[b] /= 5;
 
-            // Save to device
             devices[index].clapProfile = profile;
             saveState();
 
             isTrainingClap = false;
             btn.classList.remove("listening");
             btn.innerHTML = `<i class="fa-solid fa-hands-clapping"></i> Retrain Hand Profile`;
-            document.getElementById(`profile-status-${index}`).innerHTML = `<span style="color:#10b981;">✓ Profile Saved</span>`;
-            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">SAVED</span> <span>Hand profile trained! Listening for your claps...</span>`;
+            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">PROFILE ACTIVE</span> <span>Trained! Listening for your claps...</span>`;
             render();
             handleModeChange(index, "trained-clap");
             return;
           }
 
-          setTimeout(() => { armed = true; }, 300);
+          // 350ms lockout between sample claps
+          setTimeout(() => { armed = true; }, 350);
         }
 
         requestAnimationFrame(trainLoop);
@@ -469,7 +477,7 @@
       handleModeChange(index, "trained-clap");
     }
 
-    // --- MODE CHANGE & REAL-TIME MATCH ENGINE ---
+    // --- RUNTIME MATCHER ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -506,7 +514,7 @@
 
         const profile = devices[index].clapProfile;
         if (!profile) {
-          feedback.innerHTML = `<span class="ai-badge">Setup</span> <span>Click "Record 5 Personal Claps" above to train your hands.</span>`;
+          feedback.innerHTML = `<span class="ai-badge">Setup</span> <span>Click "Record 5 Personal Claps" above to train.</span>`;
           return;
         }
 
@@ -524,25 +532,29 @@
 
           const fp = extractFingerprint(freqData, timeData);
 
-          // Calculate spectral cosine similarity match against user's hands
-          const matchScore = (fp.peak > 15 && fp.crest > 2.8) 
+          // Compute spectral match against your stored hand profile
+          const matchScore = (fp.peak > 14 && fp.crest > 2.5) 
             ? computeCosineSimilarity(fp.bands, profile) 
             : 0;
 
-          // Visual match bar (Spikes green when your hand fingerprint matches)
+          // Meter displays live audio amplitude when quiet, transitions to green on match
           const matchPct = Math.round(matchScore * 100);
+          const liveAmpPct = Math.min(100, Math.round((fp.peak / 45) * 100));
+
           if (meterBar) {
-            meterBar.style.width = `${matchPct}%`;
-            meterBar.style.background = matchScore > 0.78 ? '#10b981' : '#38bdf8';
+            if (matchScore > 0.65) {
+              meterBar.style.width = `${matchPct}%`;
+              meterBar.style.background = '#10b981'; // Green on biometric match
+            } else {
+              meterBar.style.width = `${liveAmpPct}%`;
+              meterBar.style.background = '#38bdf8'; // Blue on ambient/speech sound
+            }
           }
 
           const now = Date.now();
 
-          // Trigger condition:
-          // 1. Match score > 0.78 (78% acoustic fingerprint correlation)
-          // 2. Crest factor > 3.2 (impulsive hand collision, not ambient noise)
-          // 3. Debounce lockout (1200ms)
-          if (matchScore > 0.78 && fp.crest > 3.2 && armed && (now - lastTrigger > 1200)) {
+          // Biometric Trigger Rule
+          if (matchScore > 0.72 && fp.crest > 2.8 && armed && (now - lastTrigger > 1200)) {
             armed = false;
             lastTrigger = now;
 
@@ -570,7 +582,7 @@
         
         const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRec) {
-          feedback.innerHTML = `<span style="color:#ef4444;">Browser does not support Speech Recognition. Use Google Chrome.</span>`;
+          feedback.innerHTML = `<span style="color:#ef4444;">Speech Recognition not supported in this browser.</span>`;
           return;
         }
 
