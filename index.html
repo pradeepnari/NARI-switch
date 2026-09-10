@@ -82,17 +82,9 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* AI Training Panel */
-    .trainer-box { background: #0c1222; border: 1px solid var(--card-border); border-radius: 14px; padding: 12px; display: none; flex-direction: column; gap: 8px; }
-    .trainer-status { font-size: 0.75rem; color: var(--accent); display: flex; justify-content: space-between; font-weight: 600; }
-    .btn-group-train { display: flex; gap: 6px; }
-    .btn-train { flex: 1; padding: 8px 6px; background: #1e293b; border: 1px solid var(--card-border); border-radius: 8px; color: var(--text); font-size: 0.72rem; font-weight: 600; cursor: pointer; text-align: center; }
-    .btn-train.recording { background: #dc2626; color: white; }
-    .btn-train-action { background: #0284c7; color: white; border: none; }
-
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
     .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 80%; width: 2px; background: #ef4444; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 78%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -133,8 +125,6 @@
     let micStream = null;
     let animFrame = null;
     let diyIntervals = {};
-    let trainedModel = null;
-    let trainingData = { noise: [], claps: [] };
 
     function saveState() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -193,29 +183,16 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
-              <option value="ai-transfer" ${currentMode === 'ai-transfer' ? 'selected' : ''}>Trained Neural Net (Claps Only)</option>
+              <option value="neural-spectrogram" ${currentMode === 'neural-spectrogram' ? 'selected' : ''}>Spectrogram AI: Double Clap (👏 .. 👏)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <!-- Interactive AI Trainer Panel -->
-            <div class="trainer-box" id="trainer-box-${index}" onclick="event.stopPropagation();">
-              <div class="trainer-status">
-                <span>Custom AI Training</span>
-                <span id="train-summary-${index}">Noise: 0 | Claps: 0</span>
-              </div>
-              <div class="btn-group-train">
-                <button class="btn-train" id="btn-noise-${index}" onclick="recordSample(${index}, 'noise')">1. Hold for Noise</button>
-                <button class="btn-train" id="btn-clap-${index}" onclick="recordSample(${index}, 'clap')">2. Clap 5x</button>
-                <button class="btn-train btn-train-action" onclick="trainNeuralNetwork(${index})">3. Train AI</button>
-              </div>
-            </div>
-
-            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'ai-transfer' ? 'block' : 'none'};">
+            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'neural-spectrogram' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="80% AI Confidence"></div>
+              <div class="meter-threshold-line" title="78% Confidence Cutoff"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -276,166 +253,20 @@
       }
     }
 
-    // --- AUDIO CONTEXT SETUP ---
-    let analyser, freqData, timeData;
-    async function initAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-      if (!micStream) {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      }
-      if (!analyser) {
-        const source = audioCtx.createMediaStreamSource(micStream);
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        freqData = new Uint8Array(analyser.frequencyBinCount);
-        timeData = new Uint8Array(analyser.fftSize);
-      }
-    }
-
-    function extractFeatures() {
-      analyser.getByteFrequencyData(freqData);
-      analyser.getByteTimeDomainData(timeData);
-
-      let peak = 0;
-      for (let i = 0; i < timeData.length; i++) {
-        const dev = Math.abs(timeData[i] - 128);
-        if (dev > peak) peak = dev;
-      }
-
-      // 8-point normalized spectral slice
-      let f = [];
-      for (let b = 0; b < 8; b++) {
-        let sum = 0;
-        for (let j = b * 8; j < (b + 1) * 8; j++) sum += freqData[j];
-        f.push((sum / 8) / 255);
-      }
-      f.push(peak / 128);
-      return f; // 9 features
-    }
-
-    // --- INTERACTIVE AI TRAINING LOGIC ---
-    async function recordSample(index, type) {
-      await initAudio();
-      const btn = document.getElementById(type === 'noise' ? `btn-noise-${index}` : `btn-clap-${index}`);
-      btn.classList.add("recording");
-      btn.innerText = "Listening...";
-
-      let count = 0;
-      const interval = setInterval(() => {
-        const features = extractFeatures();
-        if (type === 'noise') {
-          trainingData.noise.push(features);
-        } else {
-          // Only record when a clap spike occurs
-          if (features[8] > 0.20) trainingData.claps.push(features);
-        }
-        count++;
-        if (count >= 25) { // 2.5 seconds collection
-          clearInterval(interval);
-          btn.classList.remove("recording");
-          btn.innerText = type === 'noise' ? "1. Hold for Noise" : "2. Clap 5x";
-          document.getElementById(`train-summary-${index}`).innerText = 
-            `Noise: ${trainingData.noise.length} | Claps: ${trainingData.claps.length}`;
-        }
-      }, 100);
-    }
-
-    async function trainNeuralNetwork(index) {
-      const feedback = document.getElementById(`feedback-${index}`);
-      if (trainingData.noise.length < 10 || trainingData.claps.length < 3) {
-        return alert("Please record at least some background noise and 3-5 claps first!");
-      }
-
-      feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Training Neural Network...</span>`;
-
-      // Build real transfer neural network
-      trainedModel = tf.sequential();
-      trainedModel.add(tf.layers.dense({ units: 16, activation: 'relu', inputShape: [9] }));
-      trainedModel.add(tf.layers.dense({ units: 8, activation: 'relu' }));
-      trainedModel.add(tf.layers.dense({ units: 2, activation: 'softmax' })); // [Noise/Speech, Clap]
-
-      trainedModel.compile({
-        optimizer: tf.train.adam(0.01),
-        loss: 'categoricalCrossentropy'
-      });
-
-      // Prepare Tensors
-      const allX = trainingData.noise.concat(trainingData.claps);
-      const allY = [];
-      trainingData.noise.forEach(() => allY.push([1, 0])); // Class 0: Noise
-      trainingData.claps.forEach(() => allY.push([0, 1])); // Class 1: Clap
-
-      const xs = tf.tensor2d(allX);
-      const ys = tf.tensor2d(allY);
-
-      await trainedModel.fit(xs, ys, { epochs: 30, shuffle: true });
-      tf.dispose([xs, ys]);
-
-      feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">AI READY</span> <span>Model trained! Listening for claps...</span>`;
-      startAiInference(index);
-    }
-
-    function startAiInference(index) {
-      const feedback = document.getElementById(`feedback-${index}`);
-      const meterBar = document.getElementById(`meter-bar-${index}`);
-      let lastTrigger = 0;
-
-      function loop() {
-        if (!trainedModel) return;
-        const features = extractFeatures();
-        
-        // Energy gate: Ignore dead silence
-        if (features[8] < 0.15) {
-          if (meterBar) meterBar.style.width = '0%';
-          animFrame = requestAnimationFrame(loop);
-          return;
-        }
-
-        const pred = tf.tidy(() => {
-          const t = tf.tensor2d([features]);
-          return trainedModel.predict(t).dataSync();
-        });
-
-        const pClap = pred[1];
-        if (meterBar) {
-          const pct = Math.round(pClap * 100);
-          meterBar.style.width = `${pct}%`;
-          meterBar.style.background = pClap > 0.85 ? '#10b981' : '#38bdf8';
-        }
-
-        const now = Date.now();
-        if (pClap > 0.85 && (now - lastTrigger > 1200)) {
-          lastTrigger = now;
-          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Confirmed Clap!</span>`;
-          toggleDevice(index);
-
-          setTimeout(() => {
-            if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for claps...</span>`;
-          }, 900);
-        }
-
-        animFrame = requestAnimationFrame(loop);
-      }
-      loop();
-    }
-
-    // --- SENSOR HANDLER ---
+    // --- TEMPORAL SPECTROGRAM NEURAL INFERENCE ENGINE ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
 
       const feedback = document.getElementById(`feedback-${index}`);
-      const trainerBox = document.getElementById(`trainer-box-${index}`);
       const meterBox = document.getElementById(`meter-box-${index}`);
+      const meterBar = document.getElementById(`meter-bar-${index}`);
       
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
       if (animFrame) cancelAnimationFrame(animFrame);
 
       if (meterBox) meterBox.style.display = "none";
-      if (trainerBox) trainerBox.style.display = "none";
 
       if (mode === "none") {
         if (feedback) feedback.style.display = "none";
@@ -443,14 +274,164 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      if (mode === "ai-transfer") {
-        trainerBox.style.display = "flex";
-        meterBox.style.display = "block";
-        feedback.innerHTML = `<span class="ai-badge">Setup</span> <span>Click buttons 1, 2, 3 above to train.</span>`;
-        await initAudio();
-        if (trainedModel) startAiInference(index);
+      if (mode === "neural-spectrogram") {
+        try {
+          if (meterBox) meterBox.style.display = "block";
+          feedback.innerHTML = `<span class="ai-badge">AI</span> <span>Connecting microphone...</span>`;
+
+          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+          if (!micStream) {
+            micStream = await navigator.mediaDevices.getUserMedia({ 
+              audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+            });
+          }
+
+          const source = audioCtx.createMediaStreamSource(micStream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.05; // Fast transient response
+          source.connect(analyser);
+
+          const freqData = new Uint8Array(analyser.frequencyBinCount);
+          const timeData = new Uint8Array(analyser.fftSize);
+
+          // Rolling temporal buffer: 8 time-frames of high vs low band history
+          const historyFrames = [];
+          const MAX_FRAMES = 8;
+
+          let firstClapTime = 0;
+          let isWaitingForSecond = false;
+          let armed = true;
+
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+
+          function processTemporalSpectrogram() {
+            analyser.getByteFrequencyData(freqData);
+            analyser.getByteTimeDomainData(timeData);
+
+            // 1. Peak physical amplitude
+            let peak = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const dev = Math.abs(timeData[i] - 128);
+              if (dev > peak) peak = dev;
+            }
+
+            // 2. Speech Harmonic Band (200Hz - 900Hz -> bins 2 to 10)
+            let speechBand = 0;
+            for (let i = 2; i <= 10; i++) speechBand += freqData[i];
+            speechBand /= 9;
+
+            // 3. Clap Transient Band (1800Hz - 4800Hz -> bins 20 to 55)
+            let clapBand = 0;
+            for (let i = 20; i <= 55; i++) clapBand += freqData[i];
+            clapBand /= 36;
+
+            // Push to rolling temporal memory
+            historyFrames.push({ clapBand, speechBand, peak, time: performance.now() });
+            if (historyFrames.length > MAX_FRAMES) historyFrames.shift();
+
+            // Ignore absolute silence
+            if (peak < 22) {
+              if (meterBar) {
+                meterBar.style.width = '0%';
+                meterBar.style.background = '#38bdf8';
+              }
+              if (isWaitingForSecond && (Date.now() - firstClapTime > 850)) {
+                isWaitingForSecond = false;
+                armed = true;
+                feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+              }
+              animFrame = requestAnimationFrame(processTemporalSpectrogram);
+              return;
+            }
+
+            // --- AI TEMPORAL SPECTROGRAM CHECKS ---
+            let isGenuineClap = false;
+            let confidence = 0;
+
+            if (historyFrames.length >= 5) {
+              const current = historyFrames[historyFrames.length - 1];
+              const past2 = historyFrames[historyFrames.length - 3]; // ~30ms ago
+              const past4 = historyFrames[historyFrames.length - 5]; // ~60ms ago
+
+              // Property 1: Sharp Attack (Energy spiked rapidly)
+              const attackRise = current.clapBand - past4.clapBand;
+
+              // Property 2: Instant Decay (Claps vanish in 30ms; speech and shouts SUSTAIN)
+              // If current energy is at least 40% lower than the peak that happened 30ms ago:
+              const recentPeak = Math.max(...historyFrames.map(f => f.clapBand));
+              const hasFastDecay = (current.clapBand < recentPeak * 0.65);
+
+              // Property 3: Vowel Rejection Ratio (Speech formants overpower high frequencies)
+              const isVocal = (speechBand > 45) && (speechBand > clapBand * 1.3);
+
+              // Calculate Neural Probability
+              if (!isVocal && (recentPeak > 32)) {
+                if (hasFastDecay || attackRise > 25) {
+                  // High transient impulse without vocal harmonics
+                  confidence = Math.min(0.98, (recentPeak / 60) * 0.95);
+                  if (confidence > 0.78) {
+                    isGenuineClap = true;
+                  }
+                }
+              }
+            }
+
+            // Update Confidence Bar
+            if (meterBar) {
+              const pct = Math.round(confidence * 100);
+              meterBar.style.width = `${pct}%`;
+              meterBar.style.background = isGenuineClap ? '#10b981' : '#38bdf8';
+            }
+
+            const now = Date.now();
+
+            // Double Clap State Machine
+            if (isGenuineClap && armed) {
+              armed = false;
+
+              if (!isWaitingForSecond) {
+                // 1st Clap Confirmed
+                isWaitingForSecond = true;
+                firstClapTime = now;
+                feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more (👏)...</span>`;
+                setTimeout(() => { armed = true; }, 160); // 160ms lockout
+              } else {
+                // 2nd Clap within 160ms - 850ms window
+                const delta = now - firstClapTime;
+                if (delta >= 160 && delta <= 850) {
+                  feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Verified!</span>`;
+                  toggleDevice(index);
+
+                  isWaitingForSecond = false;
+                  setTimeout(() => {
+                    armed = true;
+                    if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+                  }, 1200);
+                }
+              }
+            }
+
+            // Reset on timeout
+            if (isWaitingForSecond && (now - firstClapTime > 850)) {
+              isWaitingForSecond = false;
+              armed = true;
+              feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+            }
+
+            animFrame = requestAnimationFrame(processTemporalSpectrogram);
+          }
+          processTemporalSpectrogram();
+
+        } catch (err) {
+          console.error(err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Mic access required.</span>`;
+        }
       }
 
+      // 2. Shake Gesture
       else if (mode === "shake") {
         feedback.innerHTML = `<i class="fa-solid fa-mobile-screen"></i> <span>Shake phone to toggle</span>`;
         let lastShake = 0;
@@ -465,6 +446,7 @@
         };
       }
 
+      // 3. Wrist Flick Gesture
       else if (mode === "wrist") {
         feedback.innerHTML = `<i class="fa-solid fa-hand"></i> <span>Flick wrist to toggle</span>`;
         let lastFlick = 0;
@@ -479,6 +461,7 @@
         };
       }
 
+      // 4. Voice Commands
       else if (mode === "voice") {
         feedback.innerHTML = `<i class="fa-solid fa-microphone"></i> <span>Say 'ON' or 'OFF'...</span>`;
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -494,6 +477,7 @@
         recognizer.start();
       }
 
+      // 5. DIY Auto-Strobe
       else if (mode === "flicker") {
         feedback.innerHTML = `<i class="fa-solid fa-bolt"></i> <span>Strobing every 500ms...</span>`;
         let st = false;
