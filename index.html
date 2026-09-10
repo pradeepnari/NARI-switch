@@ -9,8 +9,8 @@
   <style>
     :root {
       --bg: #090d16;
-      --card-bg: rgba(26, 34, 53, 0.85);
-      --border: rgba(255, 255, 255, 0.08);
+      --card-bg: #141b2d;
+      --card-border: rgba(255, 255, 255, 0.08);
       --primary: #0284c7;
       --accent: #38bdf8;
       --success: #10b981;
@@ -19,43 +19,78 @@
       --text-muted: #94a3b8;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px 16px 60px 16px; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px 16px 60px 16px; }
     
-    header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--card-border); }
     .brand { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
-    .btn-add-top { background: var(--primary); color: white; border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; }
+    .btn-add-top { background: var(--primary); color: white; border: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; box-shadow: 0 4px 12px rgba(2,132,199,0.4); }
 
-    .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 16px; }
+    .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 18px; }
     
-    /* Device Card */
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
-    .card-top { display: flex; justify-content: space-between; align-items: center; }
+    /* Square Type Card with Smooth Curved Edges */
+    .card { 
+      background: var(--card-bg); 
+      border: 1px solid var(--card-border); 
+      border-radius: 24px; 
+      padding: 20px; 
+      display: flex; 
+      flex-direction: column; 
+      justify-content: space-between; 
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.45); 
+      cursor: pointer; 
+      transition: border-color 0.2s, transform 0.15s; 
+      user-select: none;
+    }
+    .card:hover { border-color: rgba(56, 189, 248, 0.3); }
+    .card:active { transform: scale(0.99); }
+    
+    .card-main { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     .dev-left { display: flex; align-items: center; gap: 14px; }
-    .icon-box { width: 44px; height: 44px; border-radius: 12px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; color: var(--text-muted); }
-    .icon-box.active { background: rgba(16, 185, 129, 0.15); color: var(--success); }
-    .dev-info h3 { font-size: 1rem; font-weight: 600; margin-bottom: 2px; }
-    .dev-info p { font-size: 0.75rem; color: var(--text-muted); }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 4px; }
+    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); transition: 0.3s; }
+    .icon-box.active { background: rgba(16, 185, 129, 0.18); color: var(--success); }
+    .dev-info h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 2px; }
+    .dev-info p { font-size: 0.76rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); display: inline-block; }
     
-    .dev-actions { display: flex; align-items: center; gap: 10px; }
-    .btn-toggle { min-width: 60px; padding: 8px 14px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
+    .dev-actions { display: flex; align-items: center; gap: 10px; cursor: default; }
+    .btn-toggle { min-width: 65px; padding: 10px 16px; border-radius: 12px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
     .btn-off { background: #334155; color: #94a3b8; }
-    .btn-on { background: var(--success); color: white; }
-    .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.1rem; cursor: pointer; padding: 4px; }
+    .btn-on { background: var(--success); color: white; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
+    .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.2rem; cursor: pointer; padding: 6px; }
 
-    /* Sensor Dropdown Bar */
-    .sensor-control { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .sensor-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; color: var(--text-muted); }
-    select { background: #090d16; border: 1px solid var(--border); color: #38bdf8; padding: 8px 12px; border-radius: 8px; font-size: 0.82rem; outline: none; width: 100%; cursor: pointer; }
-    .sensor-feedback { font-size: 0.75rem; color: #fbbf24; display: none; align-items: center; gap: 6px; }
+    /* Expandable Sensor Drawer */
+    .sensor-drawer { 
+      margin-top: 14px; 
+      padding-top: 14px; 
+      border-top: 1px dashed var(--card-border); 
+      display: none; 
+      flex-direction: column; 
+      gap: 10px; 
+      cursor: default; 
+    }
+    .sensor-drawer.open { display: flex; }
+    .drawer-title { font-size: 0.78rem; color: var(--accent); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    select { 
+      background: #090d16; 
+      border: 1px solid var(--card-border); 
+      color: #38bdf8; 
+      padding: 10px 12px; 
+      border-radius: 10px; 
+      font-size: 0.85rem; 
+      outline: none; 
+      width: 100%; 
+      cursor: pointer; 
+    }
+    .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 2px; text-align: right; }
+    .sensor-feedback { font-size: 0.76rem; color: #fbbf24; display: none; align-items: center; gap: 6px; }
 
-    /* Modal */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
-    .modal-box { background: #1a2235; border: 1px solid var(--border); border-radius: 20px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+    /* Add Device Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
+    .modal-box { background: #141b2d; border: 1px solid var(--card-border); border-radius: 22px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
     .btn-close { background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; }
-    input { background: #090d16; border: 1px solid var(--border); color: white; padding: 12px; border-radius: 10px; font-size: 0.9rem; outline: none; }
-    .btn-primary { background: linear-gradient(135deg, #0284c7, #0369a1); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: bold; cursor: pointer; }
+    input { background: #090d16; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 10px; font-size: 0.9rem; outline: none; }
+    .btn-primary { background: linear-gradient(135deg, #0284c7, #0369a1); color: white; border: none; padding: 13px; border-radius: 10px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -67,14 +102,14 @@
 
   <div class="container" id="deviceList"></div>
 
-  <!-- Manual/Auto IP Pair Modal -->
+  <!-- Add Device Modal -->
   <div class="modal-overlay" id="pairModal">
     <div class="modal-box">
       <div class="modal-header">
         <span>Add Smart Switch</span>
         <button class="btn-close" onclick="closeModal()">✕</button>
       </div>
-      <input type="text" id="devName" placeholder="Appliance Name (e.g. Hall Light)">
+      <input type="text" id="devName" placeholder="Appliance Name (e.g. Bed Lamp)">
       <input type="text" id="devIp" placeholder="ESP Local IP (e.g. 192.168.1.10)">
       <button class="btn-primary" onclick="addDevice()">Pair Device</button>
     </div>
@@ -82,13 +117,18 @@
 
   <script>
     let devices = JSON.parse(localStorage.getItem("nari_devices") || "[]");
-    let activeSensorMode = {}; // Tracks active sensor routine per device
     let audioCtx = null;
     let micStream = null;
     let diyIntervals = {};
+    let openDrawerIndex = null;
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
+      render();
+    }
+
+    function toggleDrawer(index) {
+      openDrawerIndex = openDrawerIndex === index ? null : index;
       render();
     }
 
@@ -102,10 +142,19 @@
       }
 
       devices.forEach((dev, index) => {
+        const isOpen = openDrawerIndex === index;
         const card = document.createElement("div");
         card.className = "card";
+        
+        // Empty space click handler
+        card.onclick = (e) => {
+          // If clicked directly on buttons/selects, do not collapse/expand
+          if (e.target.closest('.dev-actions') || e.target.closest('.sensor-drawer')) return;
+          toggleDrawer(index);
+        };
+
         card.innerHTML = `
-          <div class="card-top">
+          <div class="card-main">
             <div class="dev-left">
               <div class="icon-box ${dev.state ? 'active' : ''}">
                 <i class="fa-solid ${dev.state ? 'fa-lightbulb' : 'fa-power-off'}"></i>
@@ -116,19 +165,21 @@
               </div>
             </div>
             <div class="dev-actions">
-              <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" onclick="toggleDevice(${index})">
+              <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" onclick="event.stopPropagation(); toggleDevice(${index});">
                 ${dev.state ? 'ON' : 'OFF'}
               </button>
-              <button class="btn-del" onclick="deleteDevice(${index})">✕</button>
+              <button class="btn-del" onclick="event.stopPropagation(); deleteDevice(${index});">✕</button>
             </div>
           </div>
+
+          <div class="hint-label">${isOpen ? '▲ Tap to collapse' : '▼ Tap card to open sensor modes'}</div>
           
-          <!-- Sensor Trigger Selector Dropdown -->
-          <div class="sensor-control">
-            <div class="sensor-row">
-              <span><i class="fa-solid fa-microchip"></i> Hardware Trigger Mode:</span>
+          <!-- Expandable Sensor Mode Drawer -->
+          <div class="sensor-drawer ${isOpen ? 'open' : ''}">
+            <div class="drawer-title">
+              <span><i class="fa-solid fa-microchip"></i> Hardware Trigger Mode</span>
             </div>
-            <select onchange="handleModeChange(${index}, this.value)">
+            <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Mode: Normal Touch Control</option>
               <option value="shake">Mode: Shake Gesture (Acc > 11g)</option>
               <option value="wrist">Mode: Wrist Flick (Gyro/Tilt)</option>
@@ -179,22 +230,18 @@
       }
     }
 
-    // --- SENSOR ROUTING & LOGIC DISPATCHER ---
+    // --- SENSOR MODES ---
     function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
-      
-      // Clear existing active listeners
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
 
       if (mode === "none") {
-        feedback.style.display = "none";
+        if (feedback) feedback.style.display = "none";
         return;
       }
+      if (feedback) feedback.style.display = "flex";
 
-      feedback.style.display = "flex";
-
-      // 1. Shake Mode (Accelerometer > 11.0f)
       if (mode === "shake") {
         let lastShake = 0;
         window.ondevicemotion = (e) => {
@@ -207,8 +254,6 @@
           }
         };
       }
-
-      // 2. Wrist Flick Mode (Rotational / Lateral tilt)
       else if (mode === "wrist") {
         let lastFlick = 0;
         window.ondevicemotion = (e) => {
@@ -221,8 +266,6 @@
           }
         };
       }
-
-      // 3. Web Speech Recognition Mode
       else if (mode === "voice") {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return alert("Speech recognition not supported in this browser.");
@@ -236,8 +279,6 @@
         };
         recognizer.start();
       }
-
-      // 4. Double Clap Audio Peak Classifier
       else if (mode === "clap") {
         initMic().then(analyser => {
           let lastClap = 0;
@@ -249,7 +290,7 @@
               let v = Math.abs(data[i] - 128);
               if (v > max) max = v;
             }
-            if (max > 65) { // Amplitude spike
+            if (max > 65) {
               const now = Date.now();
               if (now - lastClap > 200 && now - lastClap < 1000) {
                 toggleDevice(index);
@@ -263,30 +304,25 @@
           monitor();
         });
       }
-
-      // 5. Music Bass Pulse Sync
       else if (mode === "music") {
         initMic().then(analyser => {
           const freq = new Uint8Array(analyser.frequencyBinCount);
           let beatCool = 0;
           function sync() {
             analyser.getByteFrequencyData(freq);
-            // Low-end bass frequencies (first 8 bins)
             let bass = 0;
             for (let i = 0; i < 8; i++) bass += freq[i];
             bass = bass / 8;
             if (bass > 200 && Date.now() - beatCool > 350) {
               beatCool = Date.now();
               sendCommand(index, true);
-              setTimeout(() => sendCommand(index, false), 80); // 80ms pulse
+              setTimeout(() => sendCommand(index, false), 80);
             }
             requestAnimationFrame(sync);
           }
           sync();
         });
       }
-
-      // 6. DIY Auto-Strobe Mode
       else if (mode === "flicker") {
         let st = false;
         diyIntervals[index] = setInterval(() => {
