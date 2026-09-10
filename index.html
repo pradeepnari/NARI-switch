@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-  <!-- TensorFlow.js Core Engine -->
+  <!-- Core TensorFlow.js Engine -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
@@ -82,10 +82,10 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* Live Energy & AI Bar */
+    /* Dual Activity & Neural Confidence Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
     .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 30%; width: 2px; background: #ef4444; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 25%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -124,8 +124,10 @@
     let openDrawerIndex = null;
     let audioCtx = null;
     let micStream = null;
+    let animFrame = null;
     let yamnetModel = null;
-    let isProcessing = false;
+    let isRunning = false;
+    let isPredicting = false;
     let diyIntervals = {};
 
     function saveState() {
@@ -185,7 +187,7 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
-              <option value="yamnet-clap" ${currentMode === 'yamnet-clap' ? 'selected' : ''}>Google YAMNet 16kHz Neural Classifier</option>
+              <option value="yamnet-clap" ${currentMode === 'yamnet-clap' ? 'selected' : ''}>Google YAMNet Deep AI (Claps Only)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
@@ -194,7 +196,7 @@
 
             <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'yamnet-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="Trigger Threshold Line"></div>
+              <div class="meter-threshold-line" title="YAMNet Trigger Line"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -255,7 +257,23 @@
       }
     }
 
-    // --- YAMNet ENGINE WITH GUARANTEED LIVE RESPONSIVE METER ---
+    // --- LINEAR INTERPOLATION RESAMPLER TO 16,000 HZ ---
+    function resampleTo16k(inputData, inputSampleRate) {
+      if (inputSampleRate === 16000) return inputData;
+      const targetLength = 15600; // YAMNet requirement (0.975s)
+      const ratio = inputSampleRate / 16000;
+      const output = new Float32Array(targetLength);
+      for (let i = 0; i < targetLength; i++) {
+        const srcIndex = i * ratio;
+        const i0 = Math.floor(srcIndex);
+        const i1 = Math.min(i0 + 1, inputData.length - 1);
+        const t = srcIndex - i0;
+        output[i] = (1 - t) * inputData[i0] + t * inputData[i1];
+      }
+      return output;
+    }
+
+    // --- ROBUST YAMNET ENGINE ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -264,7 +282,8 @@
       const meterBox = document.getElementById(`meter-box-${index}`);
       const meterBar = document.getElementById(`meter-bar-${index}`);
       
-      isProcessing = false;
+      isRunning = false;
+      if (animFrame) cancelAnimationFrame(animFrame);
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
 
@@ -279,30 +298,23 @@
       if (mode === "yamnet-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Initializing 16kHz audio engine...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Initializing native microphone...</span>`;
 
-          // Explicit AudioContext unlock
+          // 1. Initialize AudioContext at native hardware sample rate (guarantees audio flow)
           const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-          audioCtx = new AudioContextClass({ sampleRate: 16000 });
+          audioCtx = new AudioContextClass();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-          micStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-          });
-
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           const source = audioCtx.createMediaStreamSource(micStream);
 
-          // 15,600 samples = exactly 0.975s for YAMNet
-          const BUFFER_LEN = 15600;
-          const rollingBuffer = new Float32Array(BUFFER_LEN);
-          let writeIndex = 0;
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
 
-          const processor = audioCtx.createScriptProcessor(2048, 1, 1);
-          source.connect(processor);
-          processor.connect(audioCtx.destination);
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Google YAMNet AI Model...</span>`;
 
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading YAMNet Neural Net weights...</span>`;
-
+          // 2. Load YAMNet Model from Google TF Hub
           if (!yamnetModel) {
             yamnetModel = await tf.loadGraphModel(
               'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1', 
@@ -310,86 +322,108 @@
             );
           }
 
-          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening... Speak or clap to test meter.</span>`;
-          isProcessing = true;
+          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps...</span>`;
+          isRunning = true;
+
+          // Rolling memory holding ~1 second of native audio
+          const nativeSampleRate = audioCtx.sampleRate;
+          const nativeWindowSize = Math.round(nativeSampleRate * 0.975);
+          const rawBuffer = new Float32Array(nativeWindowSize);
+          let writePtr = 0;
+
+          const timeDomainData = new Float32Array(analyser.fftSize);
           let lastInferenceTime = 0;
           let lastTriggerTime = 0;
 
-          processor.onaudioprocess = (e) => {
-            if (!isProcessing) return;
+          function loop() {
+            if (!isRunning) return;
 
-            const chunk = e.inputBuffer.getChannelData(0);
+            // Capture real-time waveform data
+            analyser.getFloatTimeDomainData(timeDomainData);
 
-            // 1. Calculate immediate peak amplitude for live visual meter
-            let peakAmp = 0;
-            for (let i = 0; i < chunk.length; i++) {
-              const val = Math.abs(chunk[i]);
-              if (val > peakAmp) peakAmp = val;
-              rollingBuffer[writeIndex] = chunk[i];
-              writeIndex = (writeIndex + 1) % BUFFER_LEN;
+            // Compute immediate peak amplitude for responsive meter feedback
+            let peak = 0;
+            for (let i = 0; i < timeDomainData.length; i++) {
+              const absVal = Math.abs(timeDomainData[i]);
+              if (absVal > peak) peak = absVal;
+
+              rawBuffer[writePtr] = timeDomainData[i];
+              writePtr = (writePtr + 1) % nativeWindowSize;
             }
 
-            // VISUAL METER UPDATE: Bar responds directly to microphone audio
-            const liveLevelPct = Math.min(100, Math.round(peakAmp * 250));
-            if (meterBar) {
-              meterBar.style.width = `${liveLevelPct}%`;
-              meterBar.style.background = '#38bdf8'; // Blue for live audio
+            // Real-time meter movement (Blue bar tracking speech, background, claps)
+            const meterPct = Math.min(100, Math.round(peak * 350));
+            if (meterBar && !isPredicting) {
+              meterBar.style.width = `${meterPct}%`;
+              meterBar.style.background = '#38bdf8';
             }
 
             const now = performance.now();
-            // Throttle neural forward-pass to every 250ms
-            if (now - lastInferenceTime < 250) return;
-            lastInferenceTime = now;
 
-            // Silence bypass: Don't run heavy tensor ops on quiet room
-            if (peakAmp < 0.05) return;
+            // Run YAMNet inference every 250ms when sound is above noise floor
+            if (peak > 0.08 && !isPredicting && (now - lastInferenceTime > 250)) {
+              lastInferenceTime = now;
+              isPredicting = true;
 
-            // 2. Reconstruct contiguous 15,600 sample array
-            const windowData = new Float32Array(BUFFER_LEN);
-            for (let i = 0; i < BUFFER_LEN; i++) {
-              windowData[i] = rollingBuffer[(writeIndex + i) % BUFFER_LEN];
+              // Reorder circular rawBuffer chronologically
+              const linearSamples = new Float32Array(nativeWindowSize);
+              for (let i = 0; i < nativeWindowSize; i++) {
+                linearSamples[i] = rawBuffer[(writePtr + i) % nativeWindowSize];
+              }
+
+              // Downsample to YAMNet's strict 16,000 Hz requirement
+              const resampled16k = resampleTo16k(linearSamples, nativeSampleRate);
+
+              // Asynchronous inference (prevents audio pipeline blocking)
+              setTimeout(() => {
+                tf.tidy(() => {
+                  const inputTensor = tf.tensor1d(resampled16k);
+                  const [scores] = yamnetModel.predict(inputTensor);
+
+                  // Read max activation across temporal frames
+                  const maxClassScores = scores.max(0).dataSync();
+
+                  // AudioSet: 58 = "Clapping", 60 = "Finger snapping", 0 = "Speech"
+                  const clapScore = maxClassScores[58] || 0;
+                  const snapScore = maxClassScores[60] || 0;
+                  const speechScore = maxClassScores[0] || 0;
+
+                  const aiClapProb = Math.max(clapScore, snapScore);
+                  const timeNow = Date.now();
+
+                  // Trigger condition:
+                  // 1. Clapping probability > 0.20
+                  // 2. Clapping activation is higher than speech
+                  // 3. Debounce lockout (1500ms)
+                  if (aiClapProb > 0.20 && aiClapProb > speechScore && (timeNow - lastTriggerTime > 1500)) {
+                    lastTriggerTime = timeNow;
+
+                    if (meterBar) {
+                      meterBar.style.width = '100%';
+                      meterBar.style.background = '#10b981'; // Green on confirmed clap
+                    }
+
+                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ YAMNet Clap Confirmed (${Math.round(aiClapProb * 100)}%)</span>`;
+                    toggleDevice(index);
+
+                    setTimeout(() => {
+                      if (feedback) {
+                        feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps...</span>`;
+                      }
+                    }, 1200);
+                  }
+                });
+                isPredicting = false;
+              }, 0);
             }
 
-            // 3. YAMNet Neural Classification Pass
-            tf.tidy(() => {
-              const inputTensor = tf.tensor1d(windowData);
-              const [scores] = yamnetModel.predict(inputTensor);
-              
-              // Max score across temporal patch frames [N, 521]
-              const maxScores = scores.max(0).dataSync();
-
-              // Class 58: Clapping, Class 60: Finger snap, Class 0: Speech
-              const clapScore = maxScores[58] || 0;
-              const snapScore = maxScores[60] || 0;
-              const speechScore = maxScores[0] || 0;
-
-              const percussiveConfidence = Math.max(clapScore, snapScore);
-              const timeNow = Date.now();
-
-              // Turn bar green and trigger if YAMNet confirms clapping
-              if (percussiveConfidence > 0.20 && percussiveConfidence > speechScore && (timeNow - lastTriggerTime > 1500)) {
-                lastTriggerTime = timeNow;
-
-                if (meterBar) {
-                  meterBar.style.width = '100%';
-                  meterBar.style.background = '#10b981'; // Green on AI trigger
-                }
-
-                feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ YAMNet Clap Confirmed (${Math.round(percussiveConfidence * 100)}%)</span>`;
-                toggleDevice(index);
-
-                setTimeout(() => {
-                  if (feedback) {
-                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps...</span>`;
-                  }
-                }, 1200);
-              }
-            });
-          };
+            animFrame = requestAnimationFrame(loop);
+          }
+          loop();
 
         } catch (err) {
-          console.error("YAMNet init failure:", err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Initialization failed: ${err.message || err}</span>`;
+          console.error("YAMNet startup error:", err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Startup Error: ${err.message || err}</span>`;
         }
       }
 
