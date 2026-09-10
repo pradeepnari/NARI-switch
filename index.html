@@ -307,7 +307,7 @@
       }
     }
 
-    // --- SENSOR MODES (CUSTOM ON/OFF VOICE & STRICT DOUBLE CLAP) ---
+    // --- SENSOR MODES (FUZZY ON/OFF VOICE & STRICT DOUBLE CLAP) ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -357,17 +357,29 @@
         updateStatusText();
 
         voiceRecognizer.onresult = (evt) => {
-          const spoken = evt.results[evt.results.length - 1][0].transcript.toLowerCase().trim();
+          const rawSpoken = evt.results[evt.results.length - 1][0].transcript.toLowerCase().trim();
+          
+          // Clean punctuation and tokenize words
+          const cleanSpoken = rawSpoken.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+          const spokenTokens = cleanSpoken.split(/\s+/).map(w => (w.endsWith('s') && w.length > 3) ? w.slice(0, -1) : w);
+
+          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${rawSpoken}"</span>`;
+
           const targetOn = (devices[index].voiceOn || "light on").toLowerCase().trim();
           const targetOff = (devices[index].voiceOff || "light off").toLowerCase().trim();
 
-          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${spoken}"</span>`;
+          // Flexible match function: accommodates plurals ('light' vs 'lights')
+          const matchesCommand = (targetStr) => {
+            const cleanTarget = targetStr.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+            const targetWords = cleanTarget.split(/\s+/).map(w => (w.endsWith('s') && w.length > 3) ? w.slice(0, -1) : w);
+            return targetWords.every(word => spokenTokens.includes(word) || cleanSpoken.includes(word));
+          };
 
-          if (spoken.includes(targetOn)) {
+          if (matchesCommand(targetOn)) {
             feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>Matched "${targetOn}"! Turning ON...</span>`;
             sendCommand(index, true);
             setTimeout(updateStatusText, 1400);
-          } else if (spoken.includes(targetOff)) {
+          } else if (matchesCommand(targetOff)) {
             feedback.innerHTML = `<span class="ai-badge" style="background:#ef4444; color:white;">MATCH</span> <span>Matched "${targetOff}"! Turning OFF...</span>`;
             sendCommand(index, false);
             setTimeout(updateStatusText, 1400);
@@ -378,7 +390,7 @@
           console.warn("Speech error:", e.error);
         };
 
-        // Keep speech connection active
+        // Auto restart speech listener
         voiceRecognizer.onend = () => {
           if (devices[index].mode === "voice-custom") {
             try { voiceRecognizer.start(); } catch(e) {}
@@ -388,7 +400,7 @@
         try { voiceRecognizer.start(); } catch(e) {}
       }
 
-      // 2. Strict Double Clap (Eliminates False Loud Noise Triggers)
+      // 2. Strict Double Clap Mode
       else if (mode === "strict-double-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
@@ -429,7 +441,6 @@
               if (dev > peak) peak = dev;
             }
 
-            // Low speech vowels (< 900 Hz) vs high clap attack (> 1.8 kHz)
             let lowSpeech = 0;
             for (let i = 2; i <= 10; i++) lowSpeech += freqData[i];
             lowSpeech /= 9;
@@ -438,7 +449,6 @@
             for (let i = 18; i <= 55; i++) highClap += freqData[i];
             highClap /= 37;
 
-            // Live visual pulse
             const visualPct = Math.min(100, Math.round((peak / 45) * 100));
             if (meterBar) {
               meterBar.style.width = `${visualPct}%`;
@@ -452,15 +462,11 @@
               armed = false;
 
               if (!isWaitingForSecond) {
-                // 1st Clap Confirmed
                 isWaitingForSecond = true;
                 firstClapTime = now;
                 feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more quickly (👏)...</span>`;
-                
-                // 150ms deadband so reverb/echo doesn't count as 2nd clap
                 setTimeout(() => { armed = true; }, 150);
               } else {
-                // 2nd Clap Confirmed within 150ms - 750ms
                 const delta = now - firstClapTime;
                 if (delta >= 150 && delta <= 750) {
                   feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Verified!</span>`;
@@ -475,14 +481,12 @@
               }
             }
 
-            // Timeout: if no second clap arrives within 750ms, cancel
             if (isWaitingForSecond && (now - firstClapTime > 750)) {
               isWaitingForSecond = false;
               armed = true;
               resetPrompt();
             }
 
-            // Re-arm when room goes quiet
             if (!armed && peak < 8 && !isWaitingForSecond) {
               armed = true;
             }
