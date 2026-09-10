@@ -124,7 +124,6 @@
     .btn-train-clap.listening { background: #dc2626; animation: pulse 1s infinite alternate; }
     @keyframes pulse { from { opacity: 0.8; } to { opacity: 1.0; } }
 
-    /* Single / Double Clap Toggle Options */
     .clap-cadence-row {
       display: flex;
       align-items: center;
@@ -209,10 +208,20 @@
       render();
     }
 
+    // Dynamic instant voice updates
     function updateVoiceCommand(index, type, text) {
-      if (type === 'on') devices[index].voiceOn = text.trim().toLowerCase();
-      if (type === 'off') devices[index].voiceOff = text.trim().toLowerCase();
+      const val = text.trim().toLowerCase();
+      if (type === 'on') devices[index].voiceOn = val;
+      if (type === 'off') devices[index].voiceOff = val;
       saveState();
+
+      // Update active UI prompt live as user types
+      const feedback = document.getElementById(`feedback-${index}`);
+      if (feedback && devices[index].mode === "voice-custom") {
+        const onWord = devices[index].voiceOn || "on";
+        const offWord = devices[index].voiceOff || "off";
+        feedback.innerHTML = `<span class="ai-badge">Voice Active</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
+      }
     }
 
     function updateClapCadence(index, cadence) {
@@ -233,9 +242,9 @@
       devices.forEach((dev, index) => {
         const isOpen = openDrawerIndex === index;
         const currentMode = dev.mode || "none";
-        const voiceOn = dev.voiceOn || "light on";
-        const voiceOff = dev.voiceOff || "light off";
-        const clapCadence = dev.clapCadence || "single"; // 'single' or 'double'
+        const voiceOn = dev.voiceOn !== undefined ? dev.voiceOn : "light on";
+        const voiceOff = dev.voiceOff !== undefined ? dev.voiceOff : "light off";
+        const clapCadence = dev.clapCadence || "single";
         const hasTrainedClap = dev.clapProfile && dev.clapProfile.length > 0;
         const card = document.createElement("div");
         card.className = "card";
@@ -273,14 +282,26 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
+              <option value="voice-custom" ${currentMode === 'voice-custom' ? 'selected' : ''}>Custom Voice Commands (Any Word ON & OFF)</option>
               <option value="trained-clap" ${currentMode === 'trained-clap' ? 'selected' : ''}>Personalized Fingerprint Clap (Your Hands Only)</option>
-              <option value="voice-custom" ${currentMode === 'voice-custom' ? 'selected' : ''}>Custom Voice Commands (ON & OFF Words)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <!-- Personal Clap Profile Trainer & Trigger Selector -->
+            <!-- Dual Custom Voice Commands -->
+            <div class="custom-voice-box" id="voice-box-${index}" style="display: ${currentMode === 'voice-custom' ? 'flex' : 'none'};" onclick="event.stopPropagation();">
+              <div class="voice-input-row">
+                <label><i class="fa-solid fa-power-off" style="color:var(--success);"></i> Voice Command to Turn ON:</label>
+                <input type="text" id="voice-on-${index}" class="custom-voice-input" value="${voiceOn}" placeholder="e.g. fan on, activate, start, sesame" oninput="updateVoiceCommand(${index}, 'on', this.value)">
+              </div>
+              <div class="voice-input-row">
+                <label><i class="fa-solid fa-power-off" style="color:var(--danger);"></i> Voice Command to Turn OFF:</label>
+                <input type="text" id="voice-off-${index}" class="custom-voice-input" value="${voiceOff}" placeholder="e.g. fan off, stop, sleep, close" oninput="updateVoiceCommand(${index}, 'off', this.value)">
+              </div>
+            </div>
+
+            <!-- Personal Clap Profile Trainer -->
             <div class="clap-trainer-box" id="clap-trainer-box-${index}" style="display: ${currentMode === 'trained-clap' ? 'flex' : 'none'};" onclick="event.stopPropagation();">
               <div class="trainer-header">
                 <span><i class="fa-solid fa-fingerprint"></i> Biometric Hand Fingerprint</span>
@@ -295,7 +316,6 @@
                 ${hasTrainedClap ? `<button class="btn-train-clap" style="flex:0.4; background:#334155;" onclick="clearClapProfile(${index})">Reset</button>` : ''}
               </div>
 
-              <!-- SINGLE vs DOUBLE CLAP SELECTOR -->
               <div class="clap-cadence-row">
                 <label><i class="fa-solid fa-sliders"></i> Trigger Mode:</label>
                 <select class="select-cadence" onchange="updateClapCadence(${index}, this.value)">
@@ -305,22 +325,10 @@
               </div>
             </div>
 
-            <!-- Dual Custom Voice Commands -->
-            <div class="custom-voice-box" id="voice-box-${index}" style="display: ${currentMode === 'voice-custom' ? 'flex' : 'none'};" onclick="event.stopPropagation();">
-              <div class="voice-input-row">
-                <label><i class="fa-solid fa-power-off" style="color:var(--success);"></i> Voice Command to Turn ON:</label>
-                <input type="text" class="custom-voice-input" value="${voiceOn}" placeholder="e.g. light on" oninput="updateVoiceCommand(${index}, 'on', this.value)">
-              </div>
-              <div class="voice-input-row">
-                <label><i class="fa-solid fa-power-off" style="color:var(--danger);"></i> Voice Command to Turn OFF:</label>
-                <input type="text" class="custom-voice-input" value="${voiceOff}" placeholder="e.g. light off" oninput="updateVoiceCommand(${index}, 'off', this.value)">
-              </div>
-            </div>
-
-            <!-- Live Spectral Match Bar -->
+            <!-- Live Level & Match Bar -->
             <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'trained-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="Biometric Threshold"></div>
+              <div class="meter-threshold-line" title="Trigger Cutoff"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -381,14 +389,11 @@
       }
     }
 
-    // --- AUDIO SYSTEM & SPECTRAL FINGERPRINT EXTRACTOR ---
+    // --- AUDIO SYSTEM ---
     async function initAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
-      
-      if (!micStream) {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      }
+      if (!micStream) micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!analyser) {
         const source = audioCtx.createMediaStreamSource(micStream);
         analyser = audioCtx.createAnalyser();
@@ -412,17 +417,13 @@
       let totalMag = 0;
       for (let b = 0; b < 16; b++) {
         let sum = 0;
-        for (let j = b * 8; j < (b + 1) * 8; j++) {
-          sum += freqData[j];
-        }
+        for (let j = b * 8; j < (b + 1) * 8; j++) sum += freqData[j];
         bands[b] = sum / 8;
         totalMag += bands[b];
       }
-
       if (totalMag > 0) {
         for (let b = 0; b < 16; b++) bands[b] /= totalMag;
       }
-
       return { bands, crest, peak };
     }
 
@@ -437,7 +438,7 @@
       return dot / (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
-    // --- TRAINING CONTROLLER ---
+    // --- CLAP TRAINING ---
     async function startClapTraining(index) {
       await initAudio();
       isTrainingClap = true;
@@ -475,7 +476,6 @@
         if (fp.peak > 14 && fp.crest > 2.5 && armed) {
           armed = false;
           clapTrainingBuffer.push(Array.from(fp.bands));
-
           const count = clapTrainingBuffer.length;
 
           if (count < 5) {
@@ -499,10 +499,8 @@
             handleModeChange(index, "trained-clap");
             return;
           }
-
           setTimeout(() => { armed = true; }, 350);
         }
-
         requestAnimationFrame(trainLoop);
       };
       trainLoop();
@@ -515,7 +513,7 @@
       handleModeChange(index, "trained-clap");
     }
 
-    // --- RUNTIME MATCHER (SUPPORTS BOTH SINGLE & DOUBLE CLAP CADENCE) ---
+    // --- SENSOR MODES ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -545,8 +543,80 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Personalized Fingerprint Clap Mode
-      if (mode === "trained-clap") {
+      // 1. UNIVERSAL CUSTOM VOICE RECOGNIZER (Matches ANY word typed in the box)
+      if (mode === "voice-custom") {
+        if (voiceBox) voiceBox.style.display = "flex";
+        
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRec) {
+          feedback.innerHTML = `<span style="color:#ef4444;">Speech Recognition not supported in this browser.</span>`;
+          return;
+        }
+
+        voiceRecognizer = new SpeechRec();
+        voiceRecognizer.continuous = true;
+        voiceRecognizer.interimResults = false;
+        voiceRecognizer.lang = 'en-US';
+
+        const updateStatusText = () => {
+          const inputOn = document.getElementById(`voice-on-${index}`);
+          const inputOff = document.getElementById(`voice-off-${index}`);
+          const onWord = (inputOn ? inputOn.value : (devices[index].voiceOn || "on")).trim();
+          const offWord = (inputOff ? inputOff.value : (devices[index].voiceOff || "off")).trim();
+          feedback.innerHTML = `<span class="ai-badge">Voice Active</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
+        };
+        updateStatusText();
+
+        voiceRecognizer.onresult = (evt) => {
+          const rawSpoken = evt.results[evt.results.length - 1][0].transcript.toLowerCase().trim();
+          const cleanSpoken = rawSpoken.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+          const spokenWords = cleanSpoken.split(/\s+/).filter(w => w.length > 0);
+
+          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${rawSpoken}"</span>`;
+
+          // READ DIRECTLY FROM LIVE INPUT BOXES (Guarantees immediate recognition of any typed word)
+          const inputOnElem = document.getElementById(`voice-on-${index}`);
+          const inputOffElem = document.getElementById(`voice-off-${index}`);
+
+          const liveOn = (inputOnElem ? inputOnElem.value : (devices[index].voiceOn || "")).toLowerCase().trim();
+          const liveOff = (inputOffElem ? inputOffElem.value : (devices[index].voiceOff || "")).toLowerCase().trim();
+
+          // Matches exact phrase OR every word in your target phrase
+          const testMatch = (targetStr) => {
+            if (!targetStr) return false;
+            const cleanTarget = targetStr.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+            // 1. Direct contiguous match
+            if (cleanSpoken.includes(cleanTarget)) return true;
+            // 2. Tokenized match (every word present anywhere in spoken phrase)
+            const targetWords = cleanTarget.split(/\s+/).filter(w => w.length > 0);
+            return targetWords.length > 0 && targetWords.every(tw => {
+              return spokenWords.some(sw => sw === tw || sw.startsWith(tw) || tw.startsWith(sw));
+            });
+          };
+
+          if (testMatch(liveOn)) {
+            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>Matched "${liveOn}"! Turning ON...</span>`;
+            sendCommand(index, true);
+            setTimeout(updateStatusText, 1400);
+          } else if (testMatch(liveOff)) {
+            feedback.innerHTML = `<span class="ai-badge" style="background:#ef4444; color:white;">MATCH</span> <span>Matched "${liveOff}"! Turning OFF...</span>`;
+            sendCommand(index, false);
+            setTimeout(updateStatusText, 1400);
+          }
+        };
+
+        voiceRecognizer.onerror = (e) => console.warn("Voice error:", e.error);
+        voiceRecognizer.onend = () => {
+          if (devices[index].mode === "voice-custom") {
+            try { voiceRecognizer.start(); } catch(e) {}
+          }
+        };
+
+        try { voiceRecognizer.start(); } catch(e) {}
+      }
+
+      // 2. PERSONALIZED FINGERPRINT CLAP (SINGLE / DOUBLE)
+      else if (mode === "trained-clap") {
         if (trainerBox) trainerBox.style.display = "flex";
         if (meterBox) meterBox.style.display = "block";
 
@@ -574,7 +644,6 @@
           analyser.getByteFrequencyData(freqData);
 
           const fp = extractFingerprint(freqData, timeData);
-
           const matchScore = (fp.peak > 14 && fp.crest > 2.5) 
             ? computeCosineSimilarity(fp.bands, profile) 
             : 0;
@@ -585,52 +654,43 @@
           if (meterBar) {
             if (isWaitingForSecond) {
               meterBar.style.width = '75%';
-              meterBar.style.background = '#f59e0b'; // Amber while waiting for 2nd clap
+              meterBar.style.background = '#f59e0b';
             } else if (matchScore > 0.65) {
               meterBar.style.width = `${matchPct}%`;
-              meterBar.style.background = '#10b981'; // Green on match
+              meterBar.style.background = '#10b981';
             } else {
               meterBar.style.width = `${liveAmpPct}%`;
-              meterBar.style.background = '#38bdf8'; // Blue for ambient
+              meterBar.style.background = '#38bdf8';
             }
           }
 
           const now = Date.now();
           const isPersonalClap = matchScore > 0.72 && fp.crest > 2.8;
 
-          // --- CADENCE DECISION ENGINE ---
           if (isPersonalClap && armed) {
             if (cadence === "single") {
-              // --- SINGLE CLAP MODE ---
               if (now - lastTrigger > 1200) {
                 armed = false;
                 lastTrigger = now;
-
                 feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Single Clap Confirmed (${matchPct}%)</span>`;
                 toggleDevice(index);
-
                 setTimeout(() => {
                   armed = true;
                   if (feedback) feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">Active</span> <span>Listening for YOUR Single Clap (👏)...</span>`;
                 }, 1000);
               }
             } else {
-              // --- DOUBLE CLAP MODE ---
               armed = false;
-
               if (!isWaitingForSecond) {
-                // 1st Clap Confirmed
                 isWaitingForSecond = true;
                 firstClapTime = now;
                 feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more quickly (👏)...</span>`;
-                setTimeout(() => { armed = true; }, 150); // 150ms deadband for echo
+                setTimeout(() => { armed = true; }, 150);
               } else {
-                // 2nd Clap Verified within 150ms - 800ms
                 const delta = now - firstClapTime;
                 if (delta >= 150 && delta <= 800) {
                   feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Confirmed (${matchPct}%)</span>`;
                   toggleDevice(index);
-
                   isWaitingForSecond = false;
                   setTimeout(() => {
                     armed = true;
@@ -641,7 +701,6 @@
             }
           }
 
-          // Timeout if 2nd clap isn't provided within 800ms
           if (isWaitingForSecond && (now - firstClapTime > 800)) {
             isWaitingForSecond = false;
             armed = true;
@@ -655,65 +714,6 @@
           animFrame = requestAnimationFrame(matchLoop);
         }
         matchLoop();
-      }
-
-      // 2. Dual Custom Voice Commands (ON & OFF Words)
-      else if (mode === "voice-custom") {
-        if (voiceBox) voiceBox.style.display = "flex";
-        
-        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRec) {
-          feedback.innerHTML = `<span style="color:#ef4444;">Speech Recognition not supported in this browser.</span>`;
-          return;
-        }
-
-        voiceRecognizer = new SpeechRec();
-        voiceRecognizer.continuous = true;
-        voiceRecognizer.interimResults = false;
-        voiceRecognizer.lang = 'en-US';
-
-        const updateStatusText = () => {
-          const onWord = devices[index].voiceOn || "light on";
-          const offWord = devices[index].voiceOff || "light off";
-          feedback.innerHTML = `<span class="ai-badge">Voice Active</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
-        };
-        updateStatusText();
-
-        voiceRecognizer.onresult = (evt) => {
-          const rawSpoken = evt.results[evt.results.length - 1][0].transcript.toLowerCase().trim();
-          const cleanSpoken = rawSpoken.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
-          const spokenTokens = cleanSpoken.split(/\s+/).map(w => (w.endsWith('s') && w.length > 3) ? w.slice(0, -1) : w);
-
-          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${rawSpoken}"</span>`;
-
-          const targetOn = (devices[index].voiceOn || "light on").toLowerCase().trim();
-          const targetOff = (devices[index].voiceOff || "light off").toLowerCase().trim();
-
-          const matchesCommand = (targetStr) => {
-            const cleanTarget = targetStr.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
-            const targetWords = cleanTarget.split(/\s+/).map(w => (w.endsWith('s') && w.length > 3) ? w.slice(0, -1) : w);
-            return targetWords.every(word => spokenTokens.includes(word) || cleanSpoken.includes(word));
-          };
-
-          if (matchesCommand(targetOn)) {
-            feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>Matched "${targetOn}"! Turning ON...</span>`;
-            sendCommand(index, true);
-            setTimeout(updateStatusText, 1400);
-          } else if (matchesCommand(targetOff)) {
-            feedback.innerHTML = `<span class="ai-badge" style="background:#ef4444; color:white;">MATCH</span> <span>Matched "${targetOff}"! Turning OFF...</span>`;
-            sendCommand(index, false);
-            setTimeout(updateStatusText, 1400);
-          }
-        };
-
-        voiceRecognizer.onerror = (e) => console.warn("Speech error:", e.error);
-        voiceRecognizer.onend = () => {
-          if (devices[index].mode === "voice-custom") {
-            try { voiceRecognizer.start(); } catch(e) {}
-          }
-        };
-
-        try { voiceRecognizer.start(); } catch(e) {}
       }
 
       // 3. Shake Gesture
