@@ -9,7 +9,7 @@
   <style>
     :root {
       --bg: #090d16;
-      --card-bg: rgba(26, 34, 53, 0.7);
+      --card-bg: rgba(26, 34, 53, 0.85);
       --border: rgba(255, 255, 255, 0.08);
       --primary: #0284c7;
       --accent: #38bdf8;
@@ -19,37 +19,43 @@
       --text-muted: #94a3b8;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px 16px 60px 16px; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px 16px 60px 16px; }
     
-    header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    header { width: 100%; max-width: 440px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
     .brand { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: 700; color: var(--accent); }
-    .btn-add-top { background: var(--primary); color: white; border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.2s; }
-    .btn-add-top:active { transform: scale(0.9); }
+    .btn-add-top { background: var(--primary); color: white; border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; }
 
     .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 16px; }
     
-    .card { background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
-    .dev-left { display: flex; align-items: center; gap: 16px; }
-    .icon-box { width: 48px; height: 48px; border-radius: 12px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; color: var(--text-muted); }
+    /* Device Card */
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
+    .card-top { display: flex; justify-content: space-between; align-items: center; }
+    .dev-left { display: flex; align-items: center; gap: 14px; }
+    .icon-box { width: 44px; height: 44px; border-radius: 12px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; color: var(--text-muted); }
     .icon-box.active { background: rgba(16, 185, 129, 0.15); color: var(--success); }
-    .dev-info h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 3px; }
-    .dev-info p { font-size: 0.78rem; color: var(--text-muted); }
+    .dev-info h3 { font-size: 1rem; font-weight: 600; margin-bottom: 2px; }
+    .dev-info p { font-size: 0.75rem; color: var(--text-muted); }
     .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 4px; }
     
-    .dev-actions { display: flex; align-items: center; gap: 14px; }
-    .btn-toggle { min-width: 65px; padding: 9px 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+    .dev-actions { display: flex; align-items: center; gap: 10px; }
+    .btn-toggle { min-width: 60px; padding: 8px 14px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
     .btn-off { background: #334155; color: #94a3b8; }
     .btn-on { background: var(--success); color: white; }
-    .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.25rem; cursor: pointer; padding: 4px; }
+    .btn-del { background: transparent; border: none; color: var(--danger); font-size: 1.1rem; cursor: pointer; padding: 4px; }
 
-    /* Modal Styling */
+    /* Sensor Dropdown Bar */
+    .sensor-control { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .sensor-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; color: var(--text-muted); }
+    select { background: #090d16; border: 1px solid var(--border); color: #38bdf8; padding: 8px 12px; border-radius: 8px; font-size: 0.82rem; outline: none; width: 100%; cursor: pointer; }
+    .sensor-feedback { font-size: 0.75rem; color: #fbbf24; display: none; align-items: center; gap: 6px; }
+
+    /* Modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
-    .modal-box { background: #1a2235; border: 1px solid var(--border); border-radius: 20px; width: 100%; max-width: 380px; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; font-size: 1.1rem; font-weight: bold; }
+    .modal-box { background: #1a2235; border: 1px solid var(--border); border-radius: 20px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
     .btn-close { background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; }
     input { background: #090d16; border: 1px solid var(--border); color: white; padding: 12px; border-radius: 10px; font-size: 0.9rem; outline: none; }
-    .btn-primary { background: linear-gradient(135deg, #0284c7, #0369a1); color: white; border: none; padding: 14px; border-radius: 10px; font-weight: bold; cursor: pointer; }
-    .scan-status { font-size: 0.82rem; color: var(--accent); text-align: center; display: none; }
+    .btn-primary { background: linear-gradient(135deg, #0284c7, #0369a1); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -61,23 +67,25 @@
 
   <div class="container" id="deviceList"></div>
 
-  <!-- Pair Modal -->
+  <!-- Manual/Auto IP Pair Modal -->
   <div class="modal-overlay" id="pairModal">
     <div class="modal-box">
       <div class="modal-header">
-        <span><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Pair Device</span>
+        <span>Add Smart Switch</span>
         <button class="btn-close" onclick="closeModal()">✕</button>
       </div>
-      <p style="font-size: 0.85rem; color: var(--text-muted);">Ensure the switch is connected to home Wi-Fi via its setup portal first.</p>
-      
-      <input type="text" id="devName" placeholder="Appliance Name (e.g. Bedside Lamp)">
-      <button class="btn-primary" id="btnScan" onclick="startScanAndPair()">Auto-Detect & Pair</button>
-      <div class="scan-status" id="scanText"><i class="fa-solid fa-spinner fa-spin"></i> Scanning local network for new switch...</div>
+      <input type="text" id="devName" placeholder="Appliance Name (e.g. Hall Light)">
+      <input type="text" id="devIp" placeholder="ESP Local IP (e.g. 192.168.1.10)">
+      <button class="btn-primary" onclick="addDevice()">Pair Device</button>
     </div>
   </div>
 
   <script>
     let devices = JSON.parse(localStorage.getItem("nari_devices") || "[]");
+    let activeSensorMode = {}; // Tracks active sensor routine per device
+    let audioCtx = null;
+    let micStream = null;
+    let diyIntervals = {};
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -89,7 +97,7 @@
       list.innerHTML = "";
 
       if (devices.length === 0) {
-        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No devices added.<br>Tap <b>+</b> at the top right to pair your first device.</p></div>`;
+        list.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);"><p>No devices paired.<br>Tap <b>+</b> to pair an appliance.</p></div>`;
         return;
       }
 
@@ -97,20 +105,41 @@
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
-          <div class="dev-left">
-            <div class="icon-box ${dev.state ? 'active' : ''}">
-              <i class="fa-solid ${dev.state ? 'fa-lightbulb' : 'fa-power-off'}"></i>
+          <div class="card-top">
+            <div class="dev-left">
+              <div class="icon-box ${dev.state ? 'active' : ''}">
+                <i class="fa-solid ${dev.state ? 'fa-lightbulb' : 'fa-power-off'}"></i>
+              </div>
+              <div class="dev-info">
+                <h3>${dev.name}</h3>
+                <p><span class="status-dot"></span>${dev.ip}</p>
+              </div>
             </div>
-            <div class="dev-info">
-              <h3>${dev.name}</h3>
-              <p><span class="status-dot"></span>${dev.ip}</p>
+            <div class="dev-actions">
+              <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" onclick="toggleDevice(${index})">
+                ${dev.state ? 'ON' : 'OFF'}
+              </button>
+              <button class="btn-del" onclick="deleteDevice(${index})">✕</button>
             </div>
           </div>
-          <div class="dev-actions">
-            <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" onclick="toggleDevice(${index})">
-              ${dev.state ? 'ON' : 'OFF'}
-            </button>
-            <button class="btn-del" onclick="deleteDevice(${index})">✕</button>
+          
+          <!-- Sensor Trigger Selector Dropdown -->
+          <div class="sensor-control">
+            <div class="sensor-row">
+              <span><i class="fa-solid fa-microchip"></i> Hardware Trigger Mode:</span>
+            </div>
+            <select onchange="handleModeChange(${index}, this.value)">
+              <option value="none" selected>Mode: Normal Touch Control</option>
+              <option value="shake">Mode: Shake Gesture (Acc > 11g)</option>
+              <option value="wrist">Mode: Wrist Flick (Gyro/Tilt)</option>
+              <option value="voice">Mode: Voice ("Lights ON" / "Lights OFF")</option>
+              <option value="clap">Mode: Double Clap Acoustic Detector</option>
+              <option value="music">Mode: Music Bass Pulse Sync</option>
+              <option value="flicker">Mode: DIY Software Strobe (500ms)</option>
+            </select>
+            <div class="sensor-feedback" id="feedback-${index}">
+              <i class="fa-solid fa-satellite-dish fa-fade"></i> <span>Sensor listening...</span>
+            </div>
           </div>
         `;
         list.appendChild(card);
@@ -120,61 +149,25 @@
     function openModal() { document.getElementById("pairModal").style.display = "flex"; }
     function closeModal() { document.getElementById("pairModal").style.display = "none"; }
 
-    // Scans local IP range 192.168.1.2 - 192.168.1.40 for unassigned NARI switches
-    async function startScanAndPair() {
+    function addDevice() {
       const name = document.getElementById("devName").value.trim();
-      if (!name) return alert("Enter an appliance name first.");
+      const ip = document.getElementById("devIp").value.trim();
+      if (!name || !ip) return alert("Fill in both fields.");
+      devices.push({ name, ip, state: false });
+      save();
+      closeModal();
+    }
 
-      const scanText = document.getElementById("scanText");
-      const btnScan = document.getElementById("btnScan");
-      scanText.style.display = "block";
-      btnScan.disabled = true;
-
-      const registeredIPs = devices.map(d => d.ip);
-      let foundIp = null;
-
-      // Scan common home router ranges (adjust base IP if needed)
-      const baseSubnet = "192.168.1.";
-      const candidates = [];
-      for (let i = 2; i <= 35; i++) candidates.push(`${baseSubnet}${i}`);
-
-      for (const ip of candidates) {
-        if (registeredIPs.includes(ip)) continue;
-
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 200); // Quick 200ms ping
-          const res = await fetch(`http://${ip}/identify`, { mode: 'cors', signal: controller.signal });
-          clearTimeout(timeoutId);
-
-          const data = await res.json();
-          if (data.device === "NARI-Switch") {
-            foundIp = ip;
-            break;
-          }
-        } catch (e) {
-          // IP offline or unreachable
-        }
-      }
-
-      scanText.style.display = "none";
-      btnScan.disabled = false;
-
-      if (foundIp) {
-        devices.push({ name, ip: foundIp, state: false });
-        save();
-        closeModal();
-        alert(`Successfully paired ${name} at ${foundIp}!`);
-      } else {
-        alert("No new NARI switch found on this Wi-Fi. Ensure the switch is powered on and connected to the same router.");
-      }
+    function sendCommand(index, state) {
+      const dev = devices[index];
+      dev.state = state;
+      save();
+      if (navigator.vibrate) navigator.vibrate(60);
+      fetch(`http://${dev.ip}/toggle?state=${state ? 1 : 0}`, { mode: 'cors' }).catch(() => {});
     }
 
     function toggleDevice(index) {
-      const dev = devices[index];
-      dev.state = !dev.state;
-      save();
-      fetch(`http://${dev.ip}/toggle?state=${dev.state ? 1 : 0}`, { mode: 'cors' }).catch(() => {});
+      sendCommand(index, !devices[index].state);
     }
 
     function deleteDevice(index) {
@@ -184,6 +177,133 @@
         devices.splice(index, 1);
         save();
       }
+    }
+
+    // --- SENSOR ROUTING & LOGIC DISPATCHER ---
+    function handleModeChange(index, mode) {
+      const feedback = document.getElementById(`feedback-${index}`);
+      
+      // Clear existing active listeners
+      window.ondevicemotion = null;
+      if (diyIntervals[index]) clearInterval(diyIntervals[index]);
+
+      if (mode === "none") {
+        feedback.style.display = "none";
+        return;
+      }
+
+      feedback.style.display = "flex";
+
+      // 1. Shake Mode (Accelerometer > 11.0f)
+      if (mode === "shake") {
+        let lastShake = 0;
+        window.ondevicemotion = (e) => {
+          const acc = e.accelerationIncludingGravity;
+          if (!acc) return;
+          const force = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z) - 9.81;
+          if (force > 11.0 && Date.now() - lastShake > 1500) {
+            lastShake = Date.now();
+            toggleDevice(index);
+          }
+        };
+      }
+
+      // 2. Wrist Flick Mode (Rotational / Lateral tilt)
+      else if (mode === "wrist") {
+        let lastFlick = 0;
+        window.ondevicemotion = (e) => {
+          const acc = e.acceleration;
+          if (!acc) return;
+          const lateral = Math.sqrt(acc.x * acc.x + acc.y * acc.y);
+          if (lateral > 14.0 && Date.now() - lastFlick > 1200) {
+            lastFlick = Date.now();
+            toggleDevice(index);
+          }
+        };
+      }
+
+      // 3. Web Speech Recognition Mode
+      else if (mode === "voice") {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return alert("Speech recognition not supported in this browser.");
+        const recognizer = new SpeechRecognition();
+        recognizer.continuous = true;
+        recognizer.lang = 'en-US';
+        recognizer.onresult = (evt) => {
+          const text = evt.results[evt.results.length - 1][0].transcript.toLowerCase();
+          if (text.includes("on") || text.includes("light on")) sendCommand(index, true);
+          else if (text.includes("off") || text.includes("light off")) sendCommand(index, false);
+        };
+        recognizer.start();
+      }
+
+      // 4. Double Clap Audio Peak Classifier
+      else if (mode === "clap") {
+        initMic().then(analyser => {
+          let lastClap = 0;
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          function monitor() {
+            analyser.getByteTimeDomainData(data);
+            let max = 0;
+            for (let i = 0; i < data.length; i++) {
+              let v = Math.abs(data[i] - 128);
+              if (v > max) max = v;
+            }
+            if (max > 65) { // Amplitude spike
+              const now = Date.now();
+              if (now - lastClap > 200 && now - lastClap < 1000) {
+                toggleDevice(index);
+                lastClap = 0;
+              } else {
+                lastClap = now;
+              }
+            }
+            requestAnimationFrame(monitor);
+          }
+          monitor();
+        });
+      }
+
+      // 5. Music Bass Pulse Sync
+      else if (mode === "music") {
+        initMic().then(analyser => {
+          const freq = new Uint8Array(analyser.frequencyBinCount);
+          let beatCool = 0;
+          function sync() {
+            analyser.getByteFrequencyData(freq);
+            // Low-end bass frequencies (first 8 bins)
+            let bass = 0;
+            for (let i = 0; i < 8; i++) bass += freq[i];
+            bass = bass / 8;
+            if (bass > 200 && Date.now() - beatCool > 350) {
+              beatCool = Date.now();
+              sendCommand(index, true);
+              setTimeout(() => sendCommand(index, false), 80); // 80ms pulse
+            }
+            requestAnimationFrame(sync);
+          }
+          sync();
+        });
+      }
+
+      // 6. DIY Auto-Strobe Mode
+      else if (mode === "flicker") {
+        let st = false;
+        diyIntervals[index] = setInterval(() => {
+          st = !st;
+          sendCommand(index, st);
+        }, 500);
+      }
+    }
+
+    async function initMic() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!micStream) micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const src = audioCtx.createMediaStreamSource(micStream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      return analyser;
     }
 
     render();
