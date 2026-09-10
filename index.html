@@ -7,7 +7,6 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Standalone Core TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
@@ -82,10 +81,9 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* Confidence Output Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
     .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 75%; width: 2px; background: #ef4444; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 78%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -127,7 +125,7 @@
     let animFrame = null;
     let diyIntervals = {};
 
-    // --- WEIGHT TENSORS FOR ACOUSTIC CLASSIFIER ---
+    // Neural Weight Tensors for Clap vs Voice vs Ambient
     const W1 = tf.tensor2d([
       [-0.6,  1.3, -0.2, -0.4, -0.7],
       [-0.9,  1.6, -0.3, -0.5, -0.8],
@@ -215,7 +213,7 @@
 
             <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'neural-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="75% Clap Match Threshold"></div>
+              <div class="meter-threshold-line" title="78% Confidence Cutoff"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -240,7 +238,6 @@
       closeModal();
     }
 
-    // Direct UI DOM mutation: Toggles switch state WITHOUT wiping out the page or audio loop
     function updateDeviceUI(index, state) {
       const btn = document.getElementById(`btn-toggle-${index}`);
       const iconBox = document.getElementById(`icon-${index}`);
@@ -258,7 +255,7 @@
       const dev = devices[index];
       dev.state = state;
       saveState();
-      updateDeviceUI(index, state); // Instant visual update without re-rendering the whole page
+      updateDeviceUI(index, state);
       if (navigator.vibrate) navigator.vibrate(60);
       fetch(`http://${dev.ip}/toggle?state=${state ? 1 : 0}`, { mode: 'cors' }).catch(() => {});
     }
@@ -277,9 +274,8 @@
       }
     }
 
-    // --- NEURAL NETWORK AUDIO PROCESSOR & SENSORS ---
+    // --- NEURAL NETWORK AUDIO INFERENCE & SENSORS ---
     async function handleModeChange(index, mode) {
-      // Save chosen mode directly to the device object
       devices[index].mode = mode;
       saveState();
 
@@ -299,7 +295,6 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Standalone Direct TF Tensor Forward-Pass
       if (mode === "neural-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
@@ -324,16 +319,32 @@
           let prevEnergy = 0;
           let lastTrigger = 0;
 
-          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps (shouting/noise ignored)...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps only...</span>`;
 
           function runInference() {
             analyser.getByteFrequencyData(freqData);
             analyser.getByteTimeDomainData(timeData);
 
-            let lowBody = 0;
-            for (let i = 1; i <= 4; i++) lowBody += freqData[i];
-            lowBody = (lowBody / 4) / 255;
+            // 1. Minimum physical amplitude check (Filters complete silence / hiss)
+            let peak = 0, sumSq = 0;
+            for (let i = 0; i < timeData.length; i++) {
+              const dev = Math.abs(timeData[i] - 128);
+              if (dev > peak) peak = dev;
+              sumSq += dev * dev;
+            }
 
+            // Energy Gate: Quiet room = 0% meter and no trigger!
+            if (peak < 22) {
+              if (meterBar) {
+                meterBar.style.width = `0%`;
+                meterBar.style.background = '#38bdf8';
+              }
+              prevEnergy = 0;
+              animFrame = requestAnimationFrame(runInference);
+              return;
+            }
+
+            // 2. Extract Acoustic Features
             let formantVowel = 0;
             for (let i = 5; i <= 13; i++) formantVowel += freqData[i];
             formantVowel = (formantVowel / 9) / 255;
@@ -350,24 +361,16 @@
             for (let i = 43; i <= 68; i++) clapHi += freqData[i];
             clapHi = (clapHi / 26) / 255;
 
-            const entropy = Math.min(1.0, (clapLo + clapHi) / (formantVowel + 0.05));
+            const totalEnergy = clapLo + clapHi;
+            const deltaE = Math.max(0, (totalEnergy - prevEnergy) * 3);
+            prevEnergy = totalEnergy * 0.7;
 
-            let peak = 0, sumSq = 0;
-            for (let i = 0; i < timeData.length; i++) {
-              const dev = Math.abs(timeData[i] - 128);
-              if (dev > peak) peak = dev;
-              sumSq += dev * dev;
-            }
             const rms = Math.sqrt(sumSq / timeData.length) || 1;
-            const crest = Math.min(1.0, (peak / rms) / 8);
+            const crest = Math.min(1.0, (peak / rms) / 5);
 
-            const curEnergy = clapLo + clapHi;
-            const deltaE = Math.max(0, Math.min(1.0, (curEnergy - prevEnergy) * 4));
-            prevEnergy = curEnergy * 0.85;
-
-            // Direct Neural MatMul Forward-Pass
+            // 3. True Tensor AI Forward-Pass
             const probs = tf.tidy(() => {
-              const X = tf.tensor2d([[lowBody, formantVowel, speechMid, clapLo, clapHi, entropy, crest, deltaE]]);
+              const X = tf.tensor2d([[0.1, formantVowel, speechMid, clapLo, clapHi, totalEnergy, crest, deltaE]]);
               const H = tf.relu(tf.add(tf.matMul(X, W1), B1));
               return tf.softmax(tf.add(tf.matMul(H, W2), B2)).dataSync();
             });
@@ -375,22 +378,23 @@
             const pVoice = probs[0];
             const pClap = probs[2];
 
+            const pct = Math.round(pClap * 100);
             if (meterBar) {
-              const pct = Math.round(pClap * 100);
               meterBar.style.width = `${pct}%`;
-              meterBar.style.background = pClap > 0.75 ? '#10b981' : (pVoice > 0.60 ? '#ef4444' : '#38bdf8');
+              meterBar.style.background = pClap > 0.78 ? '#10b981' : (pVoice > 0.50 ? '#ef4444' : '#38bdf8');
             }
 
             const now = Date.now();
 
-            if (pClap > 0.75 && pVoice < 0.30 && (now - lastTrigger > 1100)) {
+            // Strict Trigger Condition: Valid peak + clap probability + rapid rise
+            if (pClap > 0.78 && deltaE > 0.22 && pVoice < 0.25 && (now - lastTrigger > 1200)) {
               lastTrigger = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Verified (${Math.round(pClap * 100)}%)</span>`;
-              toggleDevice(index); // Updates state without rebuilding the page
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Verified (${pct}%)</span>`;
+              toggleDevice(index);
 
               setTimeout(() => {
                 if (feedback) {
-                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps...</span>`;
+                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps only...</span>`;
                 }
               }, 900);
             }
