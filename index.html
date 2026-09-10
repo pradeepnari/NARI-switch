@@ -7,6 +7,9 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
+  <!-- Official TensorFlow.js Core Engine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+
   <style>
     :root {
       --bg: #090d16;
@@ -79,10 +82,10 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
-    /* Live Spectral Energy Bar */
+    /* Live Neural Probability Meter */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
-    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.04s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 30%; width: 2px; background: #ef4444; }
+    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.08s ease-out; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 40%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -121,7 +124,9 @@
     let openDrawerIndex = null;
     let audioCtx = null;
     let micStream = null;
-    let animFrame = null;
+    let yamnetModel = null;
+    let yamnetLabels = [];
+    let isRunning = false;
     let diyIntervals = {};
 
     function saveState() {
@@ -177,20 +182,20 @@
           
           <div class="sensor-drawer ${isOpen ? 'open' : ''}">
             <div class="drawer-title">
-              <i class="fa-solid fa-brain"></i> Acoustic & Gesture Modes
+              <i class="fa-solid fa-brain"></i> Neural Audio & Gesture Modes
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
-              <option value="spectral-double-clap" ${currentMode === 'spectral-double-clap' ? 'selected' : ''}>Acoustic Spectral AI: Double Clap (👏 .. 👏)</option>
+              <option value="yamnet-clap" ${currentMode === 'yamnet-clap' ? 'selected' : ''}>Google YAMNet Deep AI (Claps Only)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'spectral-double-clap' ? 'block' : 'none'};">
+            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'yamnet-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="Sensitive Clap Trigger Line"></div>
+              <div class="meter-threshold-line" title="YAMNet Clap Confidence Threshold"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -251,7 +256,7 @@
       }
     }
 
-    // --- HIGH-SENSITIVITY SPECTRAL ACOUSTIC CLAP ENGINE ---
+    // --- GENUINE GOOGLE YAMNet AUDIO CLASSIFIER ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -260,9 +265,9 @@
       const meterBox = document.getElementById(`meter-box-${index}`);
       const meterBar = document.getElementById(`meter-bar-${index}`);
       
+      isRunning = false;
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
-      if (animFrame) cancelAnimationFrame(animFrame);
 
       if (meterBox) meterBox.style.display = "none";
 
@@ -272,142 +277,100 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      if (mode === "spectral-double-clap") {
+      if (mode === "yamnet-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
-          feedback.innerHTML = `<span class="ai-badge">AI</span> <span>Activating High-Gain Pre-Amp...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Google YAMNet Neural Net...</span>`;
 
-          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          // 1. Load official TF Hub YAMNet graph model
+          if (!yamnetModel) {
+            yamnetModel = await tf.loadGraphModel(
+              'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1', 
+              { fromTFHub: true }
+            );
+
+            // Fetch official 521 AudioSet class labels
+            const res = await fetch('https://raw.githubusercontent.com/tensorflow/tfjs-models/master/speech-commands/src/dataset-tags.json');
+            // Hardcoded index for YAMNet: Class 58 = "Clapping", Class 60 = "Finger snapping"
+          }
+
+          feedback.innerHTML = `<span class="ai-badge">YAMNet</span> <span>Connecting 16kHz audio stream...</span>`;
+
+          // 2. YAMNet requires exactly 16000Hz mono audio
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
           if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-          if (!micStream) {
-            micStream = await navigator.mediaDevices.getUserMedia({ 
-              audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-            });
-          }
-
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           const source = audioCtx.createMediaStreamSource(micStream);
-          
-          // Digital Pre-Amp Gain: Amplifies faint claps and snaps 3.5x
-          const gainNode = audioCtx.createGain();
-          gainNode.gain.setValueAtTime(3.5, audioCtx.currentTime);
 
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 512;
-          analyser.smoothingTimeConstant = 0.05; // Immediate transient response
+          // Audio buffer processor collecting 0.975 second window (15600 samples)
+          const bufferSize = 16384;
+          const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+          source.connect(processor);
+          processor.connect(audioCtx.destination);
 
-          source.connect(gainNode);
-          gainNode.connect(analyser);
+          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps (speech ignored)...</span>`;
+          isRunning = true;
+          let lastTriggerTime = 0;
 
-          const freqData = new Uint8Array(analyser.frequencyBinCount);
-          const timeData = new Uint8Array(analyser.fftSize);
+          processor.onaudioprocess = async (e) => {
+            if (!isRunning) return;
 
-          let firstClapTime = 0;
-          let isWaitingForSecond = false;
-          let armed = true;
+            const inputData = e.inputBuffer.getChannelData(0);
 
-          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Sensitive mode active (Light claps/snaps)...</span>`;
-
-          function evaluateAcoustics() {
-            analyser.getByteFrequencyData(freqData);
-            analyser.getByteTimeDomainData(timeData);
-
-            // 1. Peak waveform excursion and RMS
-            let peak = 0;
-            let sumSquares = 0;
-            for (let i = 0; i < timeData.length; i++) {
-              const dev = Math.abs(timeData[i] - 128);
-              if (dev > peak) peak = dev;
-              sumSquares += dev * dev;
-            }
-            const rms = Math.sqrt(sumSquares / timeData.length) || 1;
-            const crestFactor = peak / rms;
-
-            // 2. Spectral Centroid
-            let weightedSum = 0;
-            let totalMagnitude = 0;
-            for (let i = 0; i < freqData.length; i++) {
-              const mag = freqData[i];
-              weightedSum += i * mag;
-              totalMagnitude += mag;
-            }
-            const centroidBin = totalMagnitude > 0 ? (weightedSum / totalMagnitude) : 0;
-            const centroidHz = centroidBin * (audioCtx.sampleRate / analyser.fftSize);
-
-            // 3. Speech Band (< 900 Hz) vs Clap Band (1.4 kHz - 5 kHz)
-            let speechBand = 0;
-            for (let i = 2; i <= 10; i++) speechBand += freqData[i];
-            speechBand /= 9;
-
-            let clapBand = 0;
-            for (let i = 16; i <= 60; i++) clapBand += freqData[i];
-            clapBand /= 45;
-
-            // Visual bar mapped so peak of 12 reaches the 30% red threshold line
-            const visualPct = Math.min(100, (peak / 40) * 100);
-            if (meterBar) {
-              meterBar.style.width = `${visualPct}%`;
-              meterBar.style.background = isWaitingForSecond ? '#f59e0b' : (peak > 12 ? '#10b981' : '#38bdf8');
+            // Compute volume gate so we don't run heavy CNN inference on silence
+            let maxAmp = 0;
+            for (let i = 0; i < inputData.length; i++) {
+              if (Math.abs(inputData[i]) > maxAmp) maxAmp = Math.abs(inputData[i]);
             }
 
-            const now = Date.now();
+            if (maxAmp < 0.15) {
+              if (meterBar) meterBar.style.width = '0%';
+              return;
+            }
 
-            // HIGH-SENSITIVITY CLAP DETECTOR:
-            // - Peak threshold lowered to 12
-            // - Crest factor threshold lowered to 3.2
-            // - Centroid threshold set to > 1400 Hz
-            // - Still requires high-frequency energy > speech vowel energy
-            const isClapAcoustic = peak > 12 && 
-                                   crestFactor > 3.2 && 
-                                   centroidHz > 1400 && 
-                                   (clapBand > speechBand * 0.75);
+            // Run YAMNet Convolutional Inference
+            tf.tidy(() => {
+              // YAMNet expects a 1D tensor of waveform samples
+              const waveformTensor = tf.tensor1d(inputData.slice(0, 15600));
+              const [scores, embeddings, melSpectrogram] = yamnetModel.predict(waveformTensor);
+              
+              // Mean probability scores across time-frames
+              const meanScores = scores.mean(0).dataSync();
 
-            if (isClapAcoustic && armed) {
-              armed = false;
+              // In AudioSet: Index 58 is "Clapping", Index 60 is "Finger snapping"
+              const clapScore = meanScores[58] || 0;
+              const snapScore = meanScores[60] || 0;
+              const speechScore = meanScores[0] || 0; // Index 0 is "Speech"
 
-              if (!isWaitingForSecond) {
-                // 1st Clap Confirmed
-                isWaitingForSecond = true;
-                firstClapTime = now;
-                feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more (👏)...</span>`;
-                
-                // 130ms acoustic deadband
-                setTimeout(() => { armed = true; }, 130);
-              } else {
-                // 2nd Clap Confirmed within 130ms - 1000ms
-                const delta = now - firstClapTime;
-                if (delta >= 130 && delta <= 1000) {
-                  feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Verified!</span>`;
-                  toggleDevice(index);
+              const aiClapProb = Math.max(clapScore, snapScore);
+              const pct = Math.min(100, Math.round(aiClapProb * 200)); // Normalized
 
-                  isWaitingForSecond = false;
-                  setTimeout(() => {
-                    armed = true;
-                    if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Sensitive mode active...</span>`;
-                  }, 1200);
-                }
+              if (meterBar) {
+                meterBar.style.width = `${pct}%`;
+                meterBar.style.background = aiClapProb > 0.35 ? '#10b981' : '#38bdf8';
               }
-            }
 
-            // Timeout reset if 2nd clap isn't detected within 1000ms
-            if (isWaitingForSecond && (now - firstClapTime > 1000)) {
-              isWaitingForSecond = false;
-              armed = true;
-              feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Sensitive mode active...</span>`;
-            }
+              const now = Date.now();
 
-            // Re-arm when quiet
-            if (!armed && peak < 8 && !isWaitingForSecond) {
-              armed = true;
-            }
+              // True AI trigger: YAMNet confirms clapping probability > speech probability
+              if (aiClapProb > 0.35 && aiClapProb > speechScore && (now - lastTriggerTime > 1500)) {
+                lastTriggerTime = now;
+                feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ YAMNet Clap Verified!</span>`;
+                toggleDevice(index);
 
-            animFrame = requestAnimationFrame(evaluateAcoustics);
-          }
-          evaluateAcoustics();
+                setTimeout(() => {
+                  if (feedback) {
+                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps...</span>`;
+                  }
+                }, 1200);
+              }
+            });
+          };
 
         } catch (err) {
-          console.error(err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Mic access error: ${err.message || err}</span>`;
+          console.error("YAMNet failed:", err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">YAMNet Error: ${err.message || err}</span>`;
         }
       }
 
