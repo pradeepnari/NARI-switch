@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
+  <!-- Standalone Core TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
@@ -204,14 +205,15 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
-              <option value="neural-clap" ${currentMode === 'neural-clap' ? 'selected' : ''}>TF.js Neural Classifier (Claps Only)</option>
+              <option value="neural-double-clap" ${currentMode === 'neural-double-clap' ? 'selected' : ''}>TF.js Double Clap (👏 .. 👏)</option>
+              <option value="neural-single-clap" ${currentMode === 'neural-single-clap' ? 'selected' : ''}>TF.js Single Clap (Instant)</option>
               <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'neural-clap' ? 'block' : 'none'};">
+            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode.startsWith('neural') ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
               <div class="meter-threshold-line" title="78% Confidence Cutoff"></div>
             </div>
@@ -295,7 +297,8 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      if (mode === "neural-clap") {
+      // 1. Neural Classifier (Double Clap & Single Clap Modes)
+      if (mode === "neural-double-clap" || mode === "neural-single-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
           feedback.innerHTML = `<span class="ai-badge">AI</span> <span>Connecting microphone...</span>`;
@@ -317,15 +320,21 @@
           const timeData = new Uint8Array(analyser.fftSize);
 
           let prevEnergy = 0;
-          let lastTrigger = 0;
+          let firstClapTime = 0;
+          let isWaitingForSecond = false;
+          let armed = true;
 
-          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps only...</span>`;
+          const defaultStatus = mode === "neural-double-clap" 
+            ? "Listening for Double Clap (👏 .. 👏)..." 
+            : "Listening for Single Clap...";
+            
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>${defaultStatus}</span>`;
 
           function runInference() {
             analyser.getByteFrequencyData(freqData);
             analyser.getByteTimeDomainData(timeData);
 
-            // 1. Minimum physical amplitude check (Filters complete silence / hiss)
+            // Minimum physical amplitude floor check
             let peak = 0, sumSq = 0;
             for (let i = 0; i < timeData.length; i++) {
               const dev = Math.abs(timeData[i] - 128);
@@ -340,11 +349,19 @@
                 meterBar.style.background = '#38bdf8';
               }
               prevEnergy = 0;
+
+              // Check if double-clap window expired (>900ms)
+              if (isWaitingForSecond && (Date.now() - firstClapTime > 900)) {
+                isWaitingForSecond = false;
+                armed = true;
+                feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>${defaultStatus}</span>`;
+              }
+
               animFrame = requestAnimationFrame(runInference);
               return;
             }
 
-            // 2. Extract Acoustic Features
+            // Extract Acoustic Features
             let formantVowel = 0;
             for (let i = 5; i <= 13; i++) formantVowel += freqData[i];
             formantVowel = (formantVowel / 9) / 255;
@@ -368,7 +385,7 @@
             const rms = Math.sqrt(sumSq / timeData.length) || 1;
             const crest = Math.min(1.0, (peak / rms) / 5);
 
-            // 3. True Tensor AI Forward-Pass
+            // Tensor AI Forward-Pass
             const probs = tf.tidy(() => {
               const X = tf.tensor2d([[0.1, formantVowel, speechMid, clapLo, clapHi, totalEnergy, crest, deltaE]]);
               const H = tf.relu(tf.add(tf.matMul(X, W1), B1));
@@ -385,18 +402,58 @@
             }
 
             const now = Date.now();
+            const isClap = pClap > 0.78 && deltaE > 0.22 && pVoice < 0.25;
 
-            // Strict Trigger Condition: Valid peak + clap probability + rapid rise
-            if (pClap > 0.78 && deltaE > 0.22 && pVoice < 0.25 && (now - lastTrigger > 1200)) {
-              lastTrigger = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Verified (${pct}%)</span>`;
-              toggleDevice(index);
+            // --- DOUBLE CLAP LOGIC ---
+            if (mode === "neural-double-clap") {
+              if (isClap && armed) {
+                armed = false;
 
-              setTimeout(() => {
-                if (feedback) {
-                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for claps only...</span>`;
+                if (!isWaitingForSecond) {
+                  // 1st Clap Registered
+                  isWaitingForSecond = true;
+                  firstClapTime = now;
+                  feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more (👏)...</span>`;
+
+                  // 150ms dead-time prevents microphone ringing from triggering 2nd clap instantly
+                  setTimeout(() => { armed = true; }, 150);
+                } else {
+                  // 2nd Clap within 150ms to 900ms window
+                  const delta = now - firstClapTime;
+                  if (delta >= 150 && delta <= 900) {
+                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Confirmed!</span>`;
+                    toggleDevice(index);
+
+                    isWaitingForSecond = false;
+                    setTimeout(() => {
+                      armed = true;
+                      if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>${defaultStatus}</span>`;
+                    }, 1200);
+                  }
                 }
-              }, 900);
+              }
+
+              // Reset if second clap never arrives
+              if (isWaitingForSecond && (now - firstClapTime > 900)) {
+                isWaitingForSecond = false;
+                armed = true;
+                feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>${defaultStatus}</span>`;
+              }
+            }
+
+            // --- SINGLE CLAP LOGIC ---
+            else if (mode === "neural-single-clap") {
+              if (isClap && armed && (now - firstClapTime > 1200)) {
+                armed = false;
+                firstClapTime = now;
+                feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Single Clap Verified (${pct}%)</span>`;
+                toggleDevice(index);
+
+                setTimeout(() => {
+                  armed = true;
+                  if (feedback) feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>${defaultStatus}</span>`;
+                }, 900);
+              }
             }
 
             animFrame = requestAnimationFrame(runInference);
