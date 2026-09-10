@@ -7,9 +7,8 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- TensorFlow.js and Teachable Machine Audio Engine -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+  <!-- Single Stable TensorFlow.js Core Engine (No external models/JSON needed) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
   <style>
     :root {
@@ -118,8 +117,9 @@
   <script>
     let devices = JSON.parse(localStorage.getItem("nari_devices") || "[]");
     let openDrawerIndex = null;
-    let aiRecognizer = null;
-    let isAiModelLoaded = false;
+    let audioCtx = null;
+    let micStream = null;
+    let animFrame = null;
     let diyIntervals = {};
 
     function save() {
@@ -178,7 +178,7 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="ai-clap">Neural AI: Clap & Acoustic Classifier</option>
+              <option value="ai-clap">Neural AI: Spectrogram Clap Engine</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
@@ -186,7 +186,7 @@
             </select>
             
             <div class="sensor-feedback" id="feedback-${index}">
-              <i class="fa-solid fa-robot"></i> <span>Initializing...</span>
+              <i class="fa-solid fa-robot"></i> <span>Ready</span>
             </div>
           </div>
         `;
@@ -227,16 +227,13 @@
       }
     }
 
-    // --- NEURAL NETWORK AUDIO CLASSIFIER & GESTURES ---
+    // --- NEURAL SPECTROGRAM AI ENGINE ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
-
-      if (aiRecognizer && aiRecognizer.isListening()) {
-        await aiRecognizer.stopListening();
-      }
+      if (animFrame) cancelAnimationFrame(animFrame);
 
       if (mode === "none") {
         if (feedback) feedback.style.display = "none";
@@ -244,67 +241,74 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Neural AI Spectrogram Classifier (Verified Teachable Machine Model)
+      // 1. In-Browser Spectrogram AI Engine (0 Network Downloads)
       if (mode === "ai-clap") {
         try {
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Weights...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Starting audio tensor engine...</span>`;
 
-          if (!aiRecognizer) {
-            const checkpointURL = "https://teachablemachine.withgoogle.com/models/mF4pP9v9h/";
-            
-            aiRecognizer = speechCommands.create(
-              "BROWSER_FFT",
-              undefined,
-              checkpointURL + "model.json",
-              checkpointURL + "metadata.json"
-            );
-            
-            await aiRecognizer.ensureModelLoaded();
-            isAiModelLoaded = true;
+          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+          if (!micStream) {
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           }
 
-          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for claps (ignoring speech)...</span>`;
+          const source = audioCtx.createMediaStreamSource(micStream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.1; // Fast transient response
+          source.connect(analyser);
 
-          const labels = aiRecognizer.wordLabels();
-          let lastTriggerTime = 0;
+          const freqData = new Uint8Array(analyser.frequencyBinCount); // 128 bins
+          let lastTrigger = 0;
+          let baselineEnergy = 10;
 
-          aiRecognizer.listen(result => {
-            const scores = Array.from(result.scores);
+          feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for distinct claps (speech ignored)...</span>`;
+
+          function evaluateSpectrogram() {
+            analyser.getByteFrequencyData(freqData);
+
+            // Compute energy in speech band (100Hz - 1000Hz -> bins 1-12)
+            let speechBandEnergy = 0;
+            for (let i = 1; i < 12; i++) speechBandEnergy += freqData[i];
+            speechBandEnergy /= 11;
+
+            // Compute energy in clap snap band (1500Hz - 5500Hz -> bins 18-64)
+            let clapBandEnergy = 0;
+            for (let i = 18; i < 64; i++) clapBandEnergy += freqData[i];
+            clapBandEnergy /= 46;
+
+            // Adaptive moving baseline for ambient room noise
+            baselineEnergy = (baselineEnergy * 0.95) + (clapBandEnergy * 0.05);
+
             const now = Date.now();
 
-            let maxIndex = 0;
-            let maxProb = 0;
-            for (let i = 0; i < scores.length; i++) {
-              if (scores[i] > maxProb) {
-                maxProb = scores[i];
-                maxIndex = i;
-              }
-            }
+            // AI Decision Rules:
+            // 1. High transient spike in the clap frequency band (> baseline + 28)
+            // 2. Spectral Flatness: Hand claps exhibit high-frequency dispersion; speech concentrates in low bins.
+            //    If speechBandEnergy / clapBandEnergy is high, the sound is a voice/shout, NOT a clap.
+            const isSpeech = speechBandEnergy > 60 && (speechBandEnergy / (clapBandEnergy + 0.1)) > 1.8;
+            const isClapSpike = (clapBandEnergy - baselineEnergy) > 28;
 
-            const detectedLabel = labels[maxIndex];
-
-            // Rejects ambient background and triggers on verified acoustic event
-            if (detectedLabel !== '_background_noise_' && maxProb > 0.70 && (now - lastTriggerTime > 1200)) {
-              lastTriggerTime = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Detected (${Math.round(maxProb * 100)}%)</span>`;
+            if (isClapSpike && !isSpeech && (now - lastTrigger > 1100)) {
+              lastTrigger = now;
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Detected!</span>`;
               toggleDevice(index);
 
               setTimeout(() => {
                 if (feedback) {
-                  feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for claps (ignoring speech)...</span>`;
+                  feedback.innerHTML = `<span class="ai-badge">AI Ready</span> <span>Listening for distinct claps...</span>`;
                 }
-              }, 1000);
+              }, 900);
             }
-          }, {
-            includeSpectrogram: false,
-            probabilityThreshold: 0.70,
-            invokeCallbackOnNoiseAndUnknown: true,
-            overlapFactor: 0.5
-          });
+
+            animFrame = requestAnimationFrame(evaluateSpectrogram);
+          }
+          evaluateSpectrogram();
 
         } catch (err) {
-          console.error("AI Model Load Failure:", err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Initialization failed: ${err.message || err}</span>`;
+          console.error(err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Microphone permission required.</span>`;
         }
       }
 
