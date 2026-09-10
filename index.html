@@ -82,9 +82,10 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
 
+    /* Live Energy & AI Bar */
     .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
-    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.1s ease-out; }
-    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 25%; width: 2px; background: #ef4444; }
+    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s ease-out; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; left: 30%; width: 2px; background: #ef4444; }
     
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 8px; font-weight: 500; }
     .ai-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; background: rgba(56, 189, 248, 0.15); color: var(--accent); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
@@ -193,7 +194,7 @@
 
             <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'yamnet-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
-              <div class="meter-threshold-line" title="YAMNet Neural Activation Cutoff"></div>
+              <div class="meter-threshold-line" title="Trigger Threshold Line"></div>
             </div>
             
             <div class="sensor-feedback" id="feedback-${index}">
@@ -254,7 +255,7 @@
       }
     }
 
-    // --- YAMNet ROLLING OVERLAP INFERENCE ENGINE ---
+    // --- YAMNet ENGINE WITH GUARANTEED LIVE RESPONSIVE METER ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -278,19 +279,9 @@
       if (mode === "yamnet-clap") {
         try {
           if (meterBox) meterBox.style.display = "block";
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Downloading Google YAMNet Graph Weights...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Initializing 16kHz audio engine...</span>`;
 
-          // 1. Load YAMNet Model from Google TF Hub
-          if (!yamnetModel) {
-            yamnetModel = await tf.loadGraphModel(
-              'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1', 
-              { fromTFHub: true }
-            );
-          }
-
-          feedback.innerHTML = `<span class="ai-badge">YAMNet</span> <span>Creating 16kHz audio pipeline...</span>`;
-
-          // 2. Instantiate AudioContext configured strictly for 16kHz
+          // Explicit AudioContext unlock
           const AudioContextClass = window.AudioContext || window.webkitAudioContext;
           audioCtx = new AudioContextClass({ sampleRate: 16000 });
           if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -301,95 +292,95 @@
 
           const source = audioCtx.createMediaStreamSource(micStream);
 
-          // 3. Ring buffer to hold 15,600 samples (0.975s)
+          // 15,600 samples = exactly 0.975s for YAMNet
           const BUFFER_LEN = 15600;
           const rollingBuffer = new Float32Array(BUFFER_LEN);
           let writeIndex = 0;
 
-          // Process small slices (2048 samples = ~128ms chunks)
-          const node = audioCtx.createScriptProcessor(2048, 1, 1);
-          source.connect(node);
-          node.connect(audioCtx.destination);
+          const processor = audioCtx.createScriptProcessor(2048, 1, 1);
+          source.connect(processor);
+          processor.connect(audioCtx.destination);
 
-          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for hand claps...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading YAMNet Neural Net weights...</span>`;
+
+          if (!yamnetModel) {
+            yamnetModel = await tf.loadGraphModel(
+              'https://tfhub.dev/google/tfjs-model/yamnet/tfjs/1', 
+              { fromTFHub: true }
+            );
+          }
+
+          feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening... Speak or clap to test meter.</span>`;
           isProcessing = true;
           let lastInferenceTime = 0;
           let lastTriggerTime = 0;
 
-          node.onaudioprocess = async (e) => {
+          processor.onaudioprocess = (e) => {
             if (!isProcessing) return;
 
             const chunk = e.inputBuffer.getChannelData(0);
-            
-            // Push incoming samples into rolling circular memory
+
+            // 1. Calculate immediate peak amplitude for live visual meter
+            let peakAmp = 0;
             for (let i = 0; i < chunk.length; i++) {
+              const val = Math.abs(chunk[i]);
+              if (val > peakAmp) peakAmp = val;
               rollingBuffer[writeIndex] = chunk[i];
               writeIndex = (writeIndex + 1) % BUFFER_LEN;
             }
 
+            // VISUAL METER UPDATE: Bar responds directly to microphone audio
+            const liveLevelPct = Math.min(100, Math.round(peakAmp * 250));
+            if (meterBar) {
+              meterBar.style.width = `${liveLevelPct}%`;
+              meterBar.style.background = '#38bdf8'; // Blue for live audio
+            }
+
             const now = performance.now();
-            // Run YAMNet inference every 220ms (providing high frame overlap)
-            if (now - lastInferenceTime < 220) return;
+            // Throttle neural forward-pass to every 250ms
+            if (now - lastInferenceTime < 250) return;
             lastInferenceTime = now;
 
-            // Reconstruct contiguous chronological 15600-sample array
+            // Silence bypass: Don't run heavy tensor ops on quiet room
+            if (peakAmp < 0.05) return;
+
+            // 2. Reconstruct contiguous 15,600 sample array
             const windowData = new Float32Array(BUFFER_LEN);
             for (let i = 0; i < BUFFER_LEN; i++) {
               windowData[i] = rollingBuffer[(writeIndex + i) % BUFFER_LEN];
             }
 
-            // Silence rejection gate: bypass inference if no transient burst exists
-            let maxAmp = 0;
-            for (let i = 0; i < BUFFER_LEN; i++) {
-              const a = Math.abs(windowData[i]);
-              if (a > maxAmp) maxAmp = a;
-            }
-
-            if (maxAmp < 0.12) {
-              if (meterBar) meterBar.style.width = '0%';
-              return;
-            }
-
-            // 4. Run YAMNet Feedforward Execution
+            // 3. YAMNet Neural Classification Pass
             tf.tidy(() => {
               const inputTensor = tf.tensor1d(windowData);
               const [scores] = yamnetModel.predict(inputTensor);
+              
+              // Max score across temporal patch frames [N, 521]
+              const maxScores = scores.max(0).dataSync();
 
-              // scores shape: [N_frames, 521]
-              // Read maximum frame activation rather than averaging across silence
-              const maxScoresPerClass = scores.max(0).dataSync();
+              // Class 58: Clapping, Class 60: Finger snap, Class 0: Speech
+              const clapScore = maxScores[58] || 0;
+              const snapScore = maxScores[60] || 0;
+              const speechScore = maxScores[0] || 0;
 
-              // AudioSet Indices:
-              // 58: Clapping
-              // 60: Finger snapping
-              // 0:  Speech
-              const clapProb = maxScoresPerClass[58] || 0;
-              const snapProb = maxScoresPerClass[60] || 0;
-              const speechProb = maxScoresPerClass[0] || 0;
-
-              const percussiveConfidence = Math.max(clapProb, snapProb);
-
-              // Visual bar scaling (threshold marker set at 25%)
-              const visualPct = Math.min(100, Math.round(percussiveConfidence * 300));
-              if (meterBar) {
-                meterBar.style.width = `${visualPct}%`;
-                meterBar.style.background = percussiveConfidence > 0.22 ? '#10b981' : '#38bdf8';
-              }
-
+              const percussiveConfidence = Math.max(clapScore, snapScore);
               const timeNow = Date.now();
 
-              // Trigger condition:
-              // 1. Percussive confidence crosses activation cutoff (> 0.22)
-              // 2. Clapping activation is higher than speech activation
-              // 3. Debounce timeout (1500ms)
-              if (percussiveConfidence > 0.22 && percussiveConfidence > speechProb && (timeNow - lastTriggerTime > 1500)) {
+              // Turn bar green and trigger if YAMNet confirms clapping
+              if (percussiveConfidence > 0.20 && percussiveConfidence > speechScore && (timeNow - lastTriggerTime > 1500)) {
                 lastTriggerTime = timeNow;
+
+                if (meterBar) {
+                  meterBar.style.width = '100%';
+                  meterBar.style.background = '#10b981'; // Green on AI trigger
+                }
+
                 feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ YAMNet Clap Confirmed (${Math.round(percussiveConfidence * 100)}%)</span>`;
                 toggleDevice(index);
 
                 setTimeout(() => {
                   if (feedback) {
-                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for hand claps...</span>`;
+                    feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">YAMNet Active</span> <span>Listening for real claps...</span>`;
                   }
                 }, 1200);
               }
@@ -398,7 +389,7 @@
 
         } catch (err) {
           console.error("YAMNet init failure:", err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">YAMNet Setup Error: ${err.message || err}</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Initialization failed: ${err.message || err}</span>`;
         }
       }
 
