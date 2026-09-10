@@ -7,9 +7,9 @@
   <meta name="theme-color" content="#090d16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Direct, Stable TensorFlow.js + Speech Commands Engine -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.4/dist/speech-commands.min.js"></script>
+  <!-- Direct, Stable jsDelivr CDN Builds for TensorFlow.js & Speech Commands Engine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.5.4/dist/speech-commands.min.js"></script>
 
   <style>
     :root {
@@ -48,7 +48,7 @@
     
     .card-main { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     .dev-left { display: flex; align-items: center; gap: 14px; }
-    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); }
+    .icon-box { width: 48px; height: 48px; border-radius: 14px; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: var(--text-muted); transition: 0.3s; }
     .icon-box.active { background: rgba(16, 185, 129, 0.18); color: var(--success); }
     .dev-info h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 2px; }
     .dev-info p { font-size: 0.76rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
@@ -234,7 +234,6 @@
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
 
-      // Stop previous AI listener if active
       if (aiRecognizer && aiRecognizer.isListening()) {
         await aiRecognizer.stopListening();
       }
@@ -245,49 +244,49 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Genuine Neural AI Spectrogram Classifier
+      // 1. Neural AI Spectrogram Classifier (jsDelivr Mirror)
       if (mode === "ai-clap") {
         try {
-          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Network (~3MB)...</span>`;
+          feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Loading Neural Weights from CDN...</span>`;
 
           if (!aiRecognizer) {
-            // Initialize Browser FFT Spectrogram Classifier
-            aiRecognizer = speechCommands.create('BROWSER_FFT');
+            const MODEL_URL = "https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.5.4/dist/browser-fft/";
+            aiRecognizer = speechCommands.create(
+              "BROWSER_FFT",
+              undefined,
+              MODEL_URL + "model.json",
+              MODEL_URL + "metadata.json"
+            );
             await aiRecognizer.ensureModelLoaded();
             isAiModelLoaded = true;
           }
 
-          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps (ignoring speech)...</span>`;
+          feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for distinct claps...</span>`;
 
           const labels = aiRecognizer.wordLabels();
           let lastTriggerTime = 0;
 
-          // Listen directly to raw spectrogram bins
           aiRecognizer.listen(result => {
             const scores = Array.from(result.scores);
             const now = Date.now();
 
-            // The model decomposes audio into background noise vs discrete acoustic events.
-            // Human speech maps to specific phonetic word categories or background.
-            // A sharp percussive clap generates a flat vertical broadband impulse across FFT frames.
             const bgIndex = labels.indexOf('_background_noise_');
             const bgScore = bgIndex !== -1 ? scores[bgIndex] : 0;
 
-            // Compute spectrogram entropy (Claps have high-frequency dispersion; speech does not)
             let isSpeech = false;
             for (let i = 0; i < labels.length; i++) {
-              if (labels[i] !== '_background_noise_' && labels[i] !== '_unknown_' && scores[i] > 0.45) {
-                isSpeech = true; // Classified as a spoken human word
+              if (labels[i] !== '_background_noise_' && labels[i] !== '_unknown_' && scores[i] > 0.40) {
+                isSpeech = true;
                 break;
               }
             }
 
-            // A clap causes sudden loss of background classification (<0.20) WITHOUT matching speech words
+            // Claps produce an acoustic transient spike without matching speech phonemes
             const isAcousticClap = bgScore < 0.15 && !isSpeech;
 
             if (isAcousticClap && (now - lastTriggerTime > 1200)) {
               lastTriggerTime = now;
-              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ AI Confirmed Clap!</span>`;
+              feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Confirmed!</span>`;
               toggleDevice(index);
 
               setTimeout(() => {
@@ -298,14 +297,14 @@
             }
           }, {
             includeSpectrogram: false,
-            probabilityThreshold: 0.65,
+            probabilityThreshold: 0.60,
             invokeCallbackOnNoiseAndUnknown: true,
             overlapFactor: 0.5
           });
 
         } catch (err) {
-          console.error(err);
-          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Mic access denied or model blocked.</span>`;
+          console.error("AI Model Load Failure:", err);
+          feedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> <span style="color:#ef4444;">Model download blocked: ${err.message || err}</span>`;
         }
       }
 
