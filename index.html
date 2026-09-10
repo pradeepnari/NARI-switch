@@ -208,19 +208,17 @@
       render();
     }
 
-    // Dynamic instant voice updates
     function updateVoiceCommand(index, type, text) {
       const val = text.trim().toLowerCase();
       if (type === 'on') devices[index].voiceOn = val;
       if (type === 'off') devices[index].voiceOff = val;
       saveState();
 
-      // Update active UI prompt live as user types
       const feedback = document.getElementById(`feedback-${index}`);
       if (feedback && devices[index].mode === "voice-custom") {
         const onWord = devices[index].voiceOn || "on";
         const offWord = devices[index].voiceOff || "off";
-        feedback.innerHTML = `<span class="ai-badge">Voice Active</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
+        feedback.innerHTML = `<span class="ai-badge">Voice Active (en-IN)</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
       }
     }
 
@@ -417,7 +415,9 @@
       let totalMag = 0;
       for (let b = 0; b < 16; b++) {
         let sum = 0;
-        for (let j = b * 8; j < (b + 1) * 8; j++) sum += freqData[j];
+        for (let j = b * 8; j < (b + 1) * 8; j++) {
+          sum += freqData[j];
+        }
         bands[b] = sum / 8;
         totalMag += bands[b];
       }
@@ -543,7 +543,7 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. UNIVERSAL CUSTOM VOICE RECOGNIZER (Matches ANY word typed in the box)
+      // 1. UNIVERSAL ACCENT-OPTIMIZED VOICE RECOGNIZER
       if (mode === "voice-custom") {
         if (voiceBox) voiceBox.style.display = "flex";
         
@@ -556,49 +556,80 @@
         voiceRecognizer = new SpeechRec();
         voiceRecognizer.continuous = true;
         voiceRecognizer.interimResults = false;
-        voiceRecognizer.lang = 'en-US';
+        voiceRecognizer.maxAlternatives = 3;
+        voiceRecognizer.lang = 'en-IN';
 
         const updateStatusText = () => {
           const inputOn = document.getElementById(`voice-on-${index}`);
           const inputOff = document.getElementById(`voice-off-${index}`);
           const onWord = (inputOn ? inputOn.value : (devices[index].voiceOn || "on")).trim();
           const offWord = (inputOff ? inputOff.value : (devices[index].voiceOff || "off")).trim();
-          feedback.innerHTML = `<span class="ai-badge">Voice Active</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
+          feedback.innerHTML = `<span class="ai-badge">Voice Active (en-IN)</span> <span>Say "<b>${onWord}</b>" or "<b>${offWord}</b>"</span>`;
         };
         updateStatusText();
 
+        const similarity = (s1, s2) => {
+          let longer = s1.toLowerCase(), shorter = s2.toLowerCase();
+          if (s1.length < s2.length) { longer = s2; shorter = s1; }
+          let longerLength = longer.length;
+          if (longerLength === 0) return 1.0;
+          
+          let costs = [];
+          for (let i = 0; i <= longer.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= shorter.length; j++) {
+              if (i === 0) costs[j] = j;
+              else if (j > 0) {
+                let newValue = costs[j - 1];
+                if (longer.charAt(i - 1) !== shorter.charAt(j - 1)) {
+                  newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                }
+                costs[j - 1] = lastValue;
+                lastValue = newValue;
+              }
+            }
+            if (i > 0) costs[shorter.length] = lastValue;
+          }
+          return (longerLength - costs[shorter.length]) / parseFloat(longerLength);
+        };
+
         voiceRecognizer.onresult = (evt) => {
-          const rawSpoken = evt.results[evt.results.length - 1][0].transcript.toLowerCase().trim();
-          const cleanSpoken = rawSpoken.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
-          const spokenWords = cleanSpoken.split(/\s+/).filter(w => w.length > 0);
+          const resultObj = evt.results[evt.results.length - 1];
+          const heardCandidates = [];
+          for (let a = 0; a < resultObj.length; a++) {
+            heardCandidates.push(resultObj[a].transcript.toLowerCase().trim());
+          }
 
-          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${rawSpoken}"</span>`;
+          const topHeard = heardCandidates[0] || "";
+          feedback.innerHTML = `<span class="ai-badge">Heard</span> <span>"${topHeard}"</span>`;
 
-          // READ DIRECTLY FROM LIVE INPUT BOXES (Guarantees immediate recognition of any typed word)
           const inputOnElem = document.getElementById(`voice-on-${index}`);
           const inputOffElem = document.getElementById(`voice-off-${index}`);
-
           const liveOn = (inputOnElem ? inputOnElem.value : (devices[index].voiceOn || "")).toLowerCase().trim();
           const liveOff = (inputOffElem ? inputOffElem.value : (devices[index].voiceOff || "")).toLowerCase().trim();
 
-          // Matches exact phrase OR every word in your target phrase
-          const testMatch = (targetStr) => {
+          const testFuzzyMatch = (targetStr) => {
             if (!targetStr) return false;
-            const cleanTarget = targetStr.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
-            // 1. Direct contiguous match
-            if (cleanSpoken.includes(cleanTarget)) return true;
-            // 2. Tokenized match (every word present anywhere in spoken phrase)
-            const targetWords = cleanTarget.split(/\s+/).filter(w => w.length > 0);
-            return targetWords.length > 0 && targetWords.every(tw => {
-              return spokenWords.some(sw => sw === tw || sw.startsWith(tw) || tw.startsWith(sw));
+            const target = targetStr.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+
+            return heardCandidates.some(phrase => {
+              const cleanPhrase = phrase.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+              if (cleanPhrase.includes(target) || target.includes(cleanPhrase)) return true;
+
+              const pWords = cleanPhrase.split(/\s+/);
+              const tWords = target.split(/\s+/);
+              const wordsMatch = tWords.every(tw => pWords.some(pw => similarity(pw, tw) > 0.70));
+              if (wordsMatch) return true;
+
+              return similarity(cleanPhrase, target) >= 0.72;
             });
           };
 
-          if (testMatch(liveOn)) {
+          if (testFuzzyMatch(liveOn)) {
             feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>Matched "${liveOn}"! Turning ON...</span>`;
             sendCommand(index, true);
             setTimeout(updateStatusText, 1400);
-          } else if (testMatch(liveOff)) {
+          } else if (testFuzzyMatch(liveOff)) {
             feedback.innerHTML = `<span class="ai-badge" style="background:#ef4444; color:white;">MATCH</span> <span>Matched "${liveOff}"! Turning OFF...</span>`;
             sendCommand(index, false);
             setTimeout(updateStatusText, 1400);
