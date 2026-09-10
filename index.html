@@ -61,7 +61,7 @@
       border-top: 1px dashed var(--card-border); 
       display: none; 
       flex-direction: column; 
-      gap: 10px; 
+      gap: 12px; 
     }
     .sensor-drawer.open { display: flex; }
     .drawer-title { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
@@ -78,17 +78,22 @@
     }
     .hint-label { font-size: 0.72rem; color: #64748b; margin-top: 4px; text-align: right; }
     
-    /* Live Sound Meter */
-    .meter-container { width: 100%; height: 6px; background: #090d16; border-radius: 3px; overflow: hidden; margin-top: 4px; display: none; }
-    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.05s; }
-    .meter-bar.spike { background: var(--success); }
+    /* Meter & Controls */
+    .slider-box { display: none; flex-direction: column; gap: 4px; margin-top: 4px; }
+    .slider-header { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
+    input[type=range] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+
+    .meter-container { width: 100%; height: 8px; background: #090d16; border-radius: 4px; overflow: hidden; position: relative; display: none; border: 1px solid var(--card-border); }
+    .meter-bar { width: 0%; height: 100%; background: #38bdf8; transition: width 0.04s ease-out; }
+    .meter-threshold-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #ef4444; }
+    
     .sensor-feedback { font-size: 0.78rem; color: #fbbf24; display: none; align-items: center; gap: 6px; font-weight: 500; }
 
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; padding: 20px; z-index: 100; }
     .modal-box { background: #141b2d; border: 1px solid var(--card-border); border-radius: 22px; width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
     .btn-close { background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; }
-    input { background: #090d16; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 10px; font-size: 0.9rem; outline: none; }
+    input[type=text] { background: #090d16; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 10px; font-size: 0.9rem; outline: none; }
     .btn-primary { background: linear-gradient(135deg, #0284c7, #0369a1); color: white; border: none; padding: 13px; border-radius: 10px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
@@ -120,6 +125,7 @@
     let micStream = null;
     let animFrame = null;
     let diyIntervals = {};
+    let clapSensitivity = 35; // Default threshold delta
 
     function save() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
@@ -177,15 +183,26 @@
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
               <option value="none" selected>Standard Manual Mode</option>
-              <option value="clap">Acoustic: Double Clap Engine</option>
+              <option value="clap">Adaptive Double Clap Detector</option>
               <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
               <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
               <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
               <option value="flicker">DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
+            
+            <div class="slider-box" id="slider-box-${index}" onclick="event.stopPropagation();">
+              <div class="slider-header">
+                <span>Clap Spike Threshold</span>
+                <span id="thresh-val-${index}">${clapSensitivity}</span>
+              </div>
+              <input type="range" min="15" max="80" value="${clapSensitivity}" oninput="updateSensitivity(${index}, this.value)">
+            </div>
+
             <div class="meter-container" id="meter-box-${index}">
               <div class="meter-bar" id="meter-bar-${index}"></div>
+              <div class="meter-threshold-line" id="thresh-line-${index}"></div>
             </div>
+
             <div class="sensor-feedback" id="feedback-${index}">
               <i class="fa-solid fa-microphone-lines fa-fade"></i> <span>Ready</span>
             </div>
@@ -193,6 +210,12 @@
         `;
         list.appendChild(card);
       });
+    }
+
+    function updateSensitivity(index, val) {
+      clapSensitivity = parseInt(val);
+      const label = document.getElementById(`thresh-val-${index}`);
+      if (label) label.innerText = val;
     }
 
     function openModal() { document.getElementById("pairModal").style.display = "flex"; }
@@ -228,17 +251,20 @@
       }
     }
 
-    // --- SENSOR & ACOUSTIC HANDLER ---
+    // --- ADAPTIVE ACOUSTIC ENGINE ---
     async function handleModeChange(index, mode) {
       const feedback = document.getElementById(`feedback-${index}`);
       const meterBox = document.getElementById(`meter-box-${index}`);
       const meterBar = document.getElementById(`meter-bar-${index}`);
+      const threshLine = document.getElementById(`thresh-line-${index}`);
+      const sliderBox = document.getElementById(`slider-box-${index}`);
       
       window.ondevicemotion = null;
       if (diyIntervals[index]) clearInterval(diyIntervals[index]);
       if (animFrame) cancelAnimationFrame(animFrame);
 
       if (meterBox) meterBox.style.display = "none";
+      if (sliderBox) sliderBox.style.display = "none";
 
       if (mode === "none") {
         if (feedback) feedback.style.display = "none";
@@ -246,11 +272,11 @@
       }
       if (feedback) feedback.style.display = "flex";
 
-      // 1. Calibrated Double Clap Engine
       if (mode === "clap") {
         try {
-          feedback.querySelector("span").innerText = "Activating microphone...";
+          feedback.querySelector("span").innerText = "Listening to room acoustics...";
           meterBox.style.display = "block";
+          sliderBox.style.display = "flex";
           
           if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -261,92 +287,102 @@
 
           const source = audioCtx.createMediaStreamSource(micStream);
 
-          // Bandpass / High-Pass tuned to 800Hz to eliminate speech base while allowing full clap impulse
+          // Bandpass: Isolates the high snap of clapping hands (1.0 kHz - 3.5 kHz)
           const filter = audioCtx.createBiquadFilter();
-          filter.type = "highpass";
-          filter.frequency.setValueAtTime(800, audioCtx.currentTime);
+          filter.type = "bandpass";
+          filter.frequency.setValueAtTime(1800, audioCtx.currentTime);
+          filter.Q.setValueAtTime(1.2, audioCtx.currentTime);
 
           const analyser = audioCtx.createAnalyser();
           analyser.fftSize = 256;
           source.connect(filter);
           filter.connect(analyser);
 
-          feedback.querySelector("span").innerText = "Listening for Double Clap (👏 .. 👏)...";
-
           const buffer = new Uint8Array(analyser.fftSize);
+          let runningFloor = 10; // Dynamic baseline noise tracker
           let firstClapTime = 0;
           let isWaitingForSecond = false;
-          let armed = true;
+          let debounce = false;
 
-          function processClap() {
+          function loop() {
             analyser.getByteTimeDomainData(buffer);
 
-            // Compute peak excursion
-            let peak = 0;
+            // Compute peak excursion from center
+            let currentPeak = 0;
             for (let i = 0; i < buffer.length; i++) {
-              const diff = Math.abs(buffer[i] - 128);
-              if (diff > peak) peak = diff;
+              const excursion = Math.abs(buffer[i] - 128);
+              if (excursion > currentPeak) currentPeak = excursion;
             }
 
-            // Update live visual sound meter
-            const visualPct = Math.min(100, (peak / 60) * 100);
+            // Exponential Moving Average to track continuous room noise floor
+            runningFloor = (runningFloor * 0.96) + (currentPeak * 0.04);
+
+            // Calculate instantaneous spike above background noise
+            const spikeDelta = currentPeak - runningFloor;
+
+            // Visual meter rendering
+            const pct = Math.min(100, (currentPeak / 80) * 100);
             if (meterBar) {
-              meterBar.style.width = `${visualPct}%`;
-              meterBar.className = peak > 25 ? 'meter-bar spike' : 'meter-bar';
+              meterBar.style.width = `${pct}%`;
+              meterBar.style.background = spikeDelta > clapSensitivity ? '#10b981' : '#38bdf8';
+            }
+            if (threshLine) {
+              const threshPct = Math.min(100, ((runningFloor + clapSensitivity) / 80) * 100);
+              threshLine.style.left = `${threshPct}%`;
             }
 
             const now = Date.now();
 
-            // Calibrated Clap Threshold (> 25)
-            if (peak > 25 && armed) {
-              armed = false;
+            // Check if transient spike exceeds background floor by sensitivity margin
+            if (spikeDelta > clapSensitivity && !debounce) {
+              debounce = true;
 
               if (!isWaitingForSecond) {
+                // First clap verified
                 isWaitingForSecond = true;
                 firstClapTime = now;
-                feedback.querySelector("span").innerText = "👏 1st Clap heard! Clap once more...";
-                
-                // 150ms dead-time so echo doesn't trigger 2nd clap instantly
-                setTimeout(() => { armed = true; }, 150);
+                feedback.querySelector("span").innerText = "👏 1st Clap! Clap once more...";
+
+                // Lockout window (160ms) to ignore acoustic room echo of the 1st clap
+                setTimeout(() => { debounce = false; }, 160);
               } else {
                 const delta = now - firstClapTime;
-                // Double Clap Window: 150ms to 900ms
-                if (delta >= 150 && delta <= 900) {
+                // Human double-clap rhythm window (160ms to 900ms)
+                if (delta >= 160 && delta <= 900) {
                   feedback.querySelector("span").innerText = "✓ Double Clap Confirmed!";
                   toggleDevice(index);
                   
                   isWaitingForSecond = false;
                   setTimeout(() => {
-                    armed = true;
+                    debounce = false;
                     if (feedback) feedback.querySelector("span").innerText = "Listening for Double Clap (👏 .. 👏)...";
                   }, 1200);
                 }
               }
             }
 
-            // Timeout: Reset if second clap doesn't arrive within 900ms
+            // Reset if second clap times out
             if (isWaitingForSecond && (now - firstClapTime > 900)) {
               isWaitingForSecond = false;
-              armed = true;
+              debounce = false;
               feedback.querySelector("span").innerText = "Listening for Double Clap (👏 .. 👏)...";
             }
 
-            // Reset armed state when room is quiet
-            if (!armed && peak < 10 && !isWaitingForSecond) {
-              armed = true;
+            // Re-arm when signal settles back down
+            if (debounce && spikeDelta < (clapSensitivity * 0.4) && !isWaitingForSecond) {
+              debounce = false;
             }
 
-            animFrame = requestAnimationFrame(processClap);
+            animFrame = requestAnimationFrame(loop);
           }
-          processClap();
+          loop();
 
         } catch (err) {
-          alert("Microphone permission denied. Allow microphone in your browser settings.");
+          alert("Microphone permission denied.");
           if (feedback) feedback.style.display = "none";
         }
       }
 
-      // 2. Shake Gesture
       else if (mode === "shake") {
         feedback.querySelector("span").innerText = "Shake phone to toggle";
         let lastShake = 0;
@@ -361,7 +397,6 @@
         };
       }
 
-      // 3. Wrist Flick Gesture
       else if (mode === "wrist") {
         feedback.querySelector("span").innerText = "Flick wrist to toggle";
         let lastFlick = 0;
@@ -376,7 +411,6 @@
         };
       }
 
-      // 4. Voice Commands
       else if (mode === "voice") {
         feedback.querySelector("span").innerText = "Say 'ON' or 'OFF'...";
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -392,7 +426,6 @@
         recognizer.start();
       }
 
-      // 5. DIY Auto-Strobe
       else if (mode === "flicker") {
         feedback.querySelector("span").innerText = "Strobing every 500ms...";
         let st = false;
