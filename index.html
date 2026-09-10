@@ -254,7 +254,7 @@
       }
     }
 
-    // --- TEMPORAL SPECTROGRAM ENGINE WITH LIVE RESPONSIVE METER ---
+    // --- TEMPORAL SPECTROGRAM ENGINE WITH DIRECT PEAK-THRESHOLD SYNC ---
     async function handleModeChange(index, mode) {
       devices[index].mode = mode;
       saveState();
@@ -290,16 +290,11 @@
           const source = audioCtx.createMediaStreamSource(micStream);
           const analyser = audioCtx.createAnalyser();
           analyser.fftSize = 256;
-          analyser.smoothingTimeConstant = 0.1;
+          analyser.smoothingTimeConstant = 0.08;
           source.connect(analyser);
 
           const freqData = new Uint8Array(analyser.frequencyBinCount);
           const timeData = new Uint8Array(analyser.fftSize);
-
-          // Rolling temporal memory
-          const history = [];
-          const MAX_FRAMES = 8;
-          let baseline = 8;
 
           let firstClapTime = 0;
           let isWaitingForSecond = false;
@@ -323,59 +318,38 @@
             for (let i = 2; i <= 10; i++) speechBand += freqData[i];
             speechBand /= 9;
 
-            // 3. Clap Transient Band (1800Hz - 4500Hz -> bins 20 to 52)
+            // 3. Clap Transient Band (1800Hz - 4800Hz -> bins 20 to 55)
             let clapBand = 0;
-            for (let i = 20; i <= 52; i++) clapBand += freqData[i];
-            clapBand /= 33;
+            for (let i = 20; i <= 55; i++) clapBand += freqData[i];
+            clapBand /= 36;
 
-            // Adapt ambient baseline to background room sound
-            baseline = (baseline * 0.95) + (clapBand * 0.05);
-            const transientEnergy = Math.max(0, clapBand - baseline);
-
-            // Record into temporal history
-            history.push({ clapBand, speechBand, peak, time: performance.now() });
-            if (history.length > MAX_FRAMES) history.shift();
-
-            // LIVE VISUAL FEEDBACK: Bar always responds to live audio level!
+            // Live visual feedback: red line is at 45% (peak ~ 22)
             const visualPct = Math.min(100, (peak / 50) * 100);
             if (meterBar) {
               meterBar.style.width = `${visualPct}%`;
-              // Turns orange if waiting for 2nd clap, blue while listening
-              meterBar.style.background = isWaitingForSecond ? '#f59e0b' : '#38bdf8';
-            }
-
-            // AI Decision Rules (Requires multi-frame decay + high-frequency transient)
-            let isClap = false;
-            if (history.length >= 4 && peak > 12) {
-              const pastPeak = Math.max(...history.slice(0, history.length - 1).map(h => h.clapBand));
-              const fastDecay = clapBand < (pastPeak * 0.75); // Sound dropped rapidly within 40ms
-              const notSpeech = speechBand < 45 || (speechBand < clapBand * 1.2); // Not dominated by vowels
-
-              if (pastPeak > 18 && fastDecay && notSpeech) {
-                isClap = true;
-              }
+              meterBar.style.background = isWaitingForSecond ? '#f59e0b' : (peak > 22 ? '#10b981' : '#38bdf8');
             }
 
             const now = Date.now();
 
-            // Double Clap State Machine
-            if (isClap && armed) {
+            // TRIGGER RULE: Peak crosses red line (>22) AND sound is percussive, not continuous speech
+            const isPercussive = peak > 22 && (clapBand > speechBand * 0.85);
+
+            if (isPercussive && armed) {
               armed = false;
 
-              if (meterBar) {
-                meterBar.style.background = '#10b981'; // Flash green
-              }
-
               if (!isWaitingForSecond) {
-                // First Clap Verified
+                // 1st Clap Confirmed
                 isWaitingForSecond = true;
                 firstClapTime = now;
                 feedback.innerHTML = `<span class="ai-badge" style="background:#f59e0b; color:white;">1st CLAP</span> <span>Clap once more (👏)...</span>`;
-                setTimeout(() => { armed = true; }, 160); // 160ms lockout
+                
+                // 160ms deadband so 1st clap's reverb doesn't trigger 2nd clap
+                setTimeout(() => { armed = true; }, 160);
               } else {
-                // Second Clap Verified within 160ms - 850ms
+                // 2nd Clap Confirmed within 160ms - 900ms window
                 const delta = now - firstClapTime;
-                if (delta >= 160 && delta <= 850) {
+                if (delta >= 160 && delta <= 900) {
                   feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Double Clap Confirmed!</span>`;
                   toggleDevice(index);
 
@@ -388,11 +362,16 @@
               }
             }
 
-            // Timeout reset if second clap is missed
-            if (isWaitingForSecond && (now - firstClapTime > 850)) {
+            // Timeout reset if no second clap arrives within 900ms
+            if (isWaitingForSecond && (now - firstClapTime > 900)) {
               isWaitingForSecond = false;
               armed = true;
               feedback.innerHTML = `<span class="ai-badge">AI Active</span> <span>Listening for Double Clap (👏 .. 👏)...</span>`;
+            }
+
+            // Re-arm when quiet
+            if (!armed && peak < 12 && !isWaitingForSecond) {
+              armed = true;
             }
 
             animFrame = requestAnimationFrame(processAudio);
