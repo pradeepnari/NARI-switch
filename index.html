@@ -128,20 +128,18 @@
     let diyIntervals = {};
 
     // --- WEIGHT TENSORS FOR ACOUSTIC CLASSIFIER ---
-    // 8 Acoustic Inputs: [LowBody, FormantVowel, SpeechMid, ClapLo, ClapHi, Entropy, Crest, DeltaE]
     const W1 = tf.tensor2d([
-      [-0.6,  1.3, -0.2, -0.4, -0.7], // LowBody
-      [-0.9,  1.6, -0.3, -0.5, -0.8], // FormantVowel (Speech)
-      [-0.4,  1.1, -0.2, -0.3, -0.6], // SpeechMid
-      [-0.2, -1.2,  1.8,  2.1,  2.3], // ClapLo (Impulse)
-      [-0.3, -1.4,  1.9,  2.2,  2.4], // ClapHi (Snap)
-      [-0.5, -0.8,  1.4,  1.6,  1.8], // Entropy (Spectral Flatness)
-      [-0.4, -0.7,  1.6,  1.9,  2.1], // Crest Factor
-      [-0.6, -0.9,  1.8,  2.3,  2.5]  // DeltaE (Instantaneous Transient Spike)
+      [-0.6,  1.3, -0.2, -0.4, -0.7],
+      [-0.9,  1.6, -0.3, -0.5, -0.8],
+      [-0.4,  1.1, -0.2, -0.3, -0.6],
+      [-0.2, -1.2,  1.8,  2.1,  2.3],
+      [-0.3, -1.4,  1.9,  2.2,  2.4],
+      [-0.5, -0.8,  1.4,  1.6,  1.8],
+      [-0.4, -0.7,  1.6,  1.9,  2.1],
+      [-0.6, -0.9,  1.8,  2.3,  2.5]
     ]);
     const B1 = tf.tensor1d([-0.2, 0.2, -0.4, -0.4, -0.5]);
 
-    // 5 Hidden Nodes -> 3 Output Classes: [Speech, Ambient, Clap]
     const W2 = tf.tensor2d([
       [ 1.8, -0.6, -1.6],
       [ 2.2, -0.7, -1.9],
@@ -151,9 +149,8 @@
     ]);
     const B2 = tf.tensor1d([0.1, 0.2, -0.3]);
 
-    function save() {
+    function saveState() {
       localStorage.setItem("nari_devices", JSON.stringify(devices));
-      render();
     }
 
     function toggleDrawer(index) {
@@ -172,8 +169,10 @@
 
       devices.forEach((dev, index) => {
         const isOpen = openDrawerIndex === index;
+        const currentMode = dev.mode || "none";
         const card = document.createElement("div");
         card.className = "card";
+        card.id = `card-${index}`;
         
         card.onclick = (e) => {
           if (e.target.closest('.dev-actions') || e.target.closest('.sensor-drawer')) return;
@@ -183,7 +182,7 @@
         card.innerHTML = `
           <div class="card-main">
             <div class="dev-left">
-              <div class="icon-box ${dev.state ? 'active' : ''}">
+              <div class="icon-box ${dev.state ? 'active' : ''}" id="icon-${index}">
                 <i class="fa-solid ${dev.state ? 'fa-lightbulb' : 'fa-power-off'}"></i>
               </div>
               <div class="dev-info">
@@ -192,7 +191,7 @@
               </div>
             </div>
             <div class="dev-actions">
-              <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" onclick="event.stopPropagation(); toggleDevice(${index});">
+              <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" id="btn-toggle-${index}" onclick="event.stopPropagation(); toggleDevice(${index});">
                 ${dev.state ? 'ON' : 'OFF'}
               </button>
               <button class="btn-del" onclick="event.stopPropagation(); deleteDevice(${index});">✕</button>
@@ -206,15 +205,15 @@
               <i class="fa-solid fa-brain"></i> Neural AI & Gesture Modes
             </div>
             <select onclick="event.stopPropagation();" onchange="handleModeChange(${index}, this.value)">
-              <option value="none" selected>Standard Manual Mode</option>
-              <option value="neural-clap">TF.js Neural Classifier (Claps Only)</option>
-              <option value="shake">Gesture: Shake Phone (Acc > 11g)</option>
-              <option value="wrist">Gesture: Wrist Flick (Gyro/Tilt)</option>
-              <option value="voice">Voice: "Lights ON" / "Lights OFF"</option>
-              <option value="flicker">DIY: Auto-Strobe Cycle (500ms)</option>
+              <option value="none" ${currentMode === 'none' ? 'selected' : ''}>Standard Manual Mode</option>
+              <option value="neural-clap" ${currentMode === 'neural-clap' ? 'selected' : ''}>TF.js Neural Classifier (Claps Only)</option>
+              <option value="shake" ${currentMode === 'shake' ? 'selected' : ''}>Gesture: Shake Phone (Acc > 11g)</option>
+              <option value="wrist" ${currentMode === 'wrist' ? 'selected' : ''}>Gesture: Wrist Flick (Gyro/Tilt)</option>
+              <option value="voice" ${currentMode === 'voice' ? 'selected' : ''}>Voice: "Lights ON" / "Lights OFF"</option>
+              <option value="flicker" ${currentMode === 'flicker' ? 'selected' : ''}>DIY: Auto-Strobe Cycle (500ms)</option>
             </select>
 
-            <div class="meter-container" id="meter-box-${index}">
+            <div class="meter-container" id="meter-box-${index}" style="display: ${currentMode === 'neural-clap' ? 'block' : 'none'};">
               <div class="meter-bar" id="meter-bar-${index}"></div>
               <div class="meter-threshold-line" title="75% Clap Match Threshold"></div>
             </div>
@@ -235,15 +234,31 @@
       const name = document.getElementById("devName").value.trim();
       const ip = document.getElementById("devIp").value.trim();
       if (!name || !ip) return alert("Fill in both fields.");
-      devices.push({ name, ip, state: false });
-      save();
+      devices.push({ name, ip, state: false, mode: "none" });
+      saveState();
+      render();
       closeModal();
+    }
+
+    // Direct UI DOM mutation: Toggles switch state WITHOUT wiping out the page or audio loop
+    function updateDeviceUI(index, state) {
+      const btn = document.getElementById(`btn-toggle-${index}`);
+      const iconBox = document.getElementById(`icon-${index}`);
+      if (btn) {
+        btn.className = `btn-toggle ${state ? 'btn-on' : 'btn-off'}`;
+        btn.innerText = state ? 'ON' : 'OFF';
+      }
+      if (iconBox) {
+        iconBox.className = `icon-box ${state ? 'active' : ''}`;
+        iconBox.innerHTML = `<i class="fa-solid ${state ? 'fa-lightbulb' : 'fa-power-off'}"></i>`;
+      }
     }
 
     function sendCommand(index, state) {
       const dev = devices[index];
       dev.state = state;
-      save();
+      saveState();
+      updateDeviceUI(index, state); // Instant visual update without re-rendering the whole page
       if (navigator.vibrate) navigator.vibrate(60);
       fetch(`http://${dev.ip}/toggle?state=${state ? 1 : 0}`, { mode: 'cors' }).catch(() => {});
     }
@@ -257,12 +272,17 @@
       if (confirm(`Reset and erase Wi-Fi on ${dev.name}?`)) {
         fetch(`http://${dev.ip}/resetwifi`, { mode: 'cors' }).catch(() => {});
         devices.splice(index, 1);
-        save();
+        saveState();
+        render();
       }
     }
 
-    // --- NEURAL NETWORK AUDIO PROCESSOR ---
+    // --- NEURAL NETWORK AUDIO PROCESSOR & SENSORS ---
     async function handleModeChange(index, mode) {
+      // Save chosen mode directly to the device object
+      devices[index].mode = mode;
+      saveState();
+
       const feedback = document.getElementById(`feedback-${index}`);
       const meterBox = document.getElementById(`meter-box-${index}`);
       const meterBar = document.getElementById(`meter-bar-${index}`);
@@ -288,7 +308,6 @@
           if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-          // Compatible audio stream request
           if (!micStream) {
             micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           }
@@ -311,7 +330,6 @@
             analyser.getByteFrequencyData(freqData);
             analyser.getByteTimeDomainData(timeData);
 
-            // Extract 8 normalized features:
             let lowBody = 0;
             for (let i = 1; i <= 4; i++) lowBody += freqData[i];
             lowBody = (lowBody / 4) / 255;
@@ -357,7 +375,6 @@
             const pVoice = probs[0];
             const pClap = probs[2];
 
-            // Render prediction probabilities
             if (meterBar) {
               const pct = Math.round(pClap * 100);
               meterBar.style.width = `${pct}%`;
@@ -366,11 +383,10 @@
 
             const now = Date.now();
 
-            // Trigger when Clap probability crosses 75% and Voice probability is low
             if (pClap > 0.75 && pVoice < 0.30 && (now - lastTrigger > 1100)) {
               lastTrigger = now;
               feedback.innerHTML = `<span class="ai-badge" style="background:#10b981; color:white;">MATCH</span> <span>✓ Clap Verified (${Math.round(pClap * 100)}%)</span>`;
-              toggleDevice(index);
+              toggleDevice(index); // Updates state without rebuilding the page
 
               setTimeout(() => {
                 if (feedback) {
