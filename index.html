@@ -200,13 +200,24 @@
     let isTrainingClap = false;
     let clapTrainingBuffer = [];
 
-    // --- AUTO-IMPORT FROM SHARED URL LINK ---
+    // --- EXPIRATION CHECK: SECURE 10-MINUTE EPHEMERAL PAIRING ---
     function checkUrlPairing() {
       const params = new URLSearchParams(window.location.search);
       const addName = params.get('add');
       const addIp = params.get('ip');
+      const expiresAt = parseInt(params.get('exp'), 10);
 
       if (addName && addIp) {
+        const now = Date.now();
+
+        // 1. Enforce 10-minute expiry validation
+        if (!expiresAt || isNaN(expiresAt) || now > expiresAt) {
+          alert("⚠️ Pairing Failed: This invitation link has expired for security.\n\nLinks are valid for 10 minutes only. Please generate a fresh share link from the main device.");
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return;
+        }
+
+        // 2. Add device if not already present
         const exists = devices.some(d => d.ip === addIp);
         if (!exists) {
           devices.push({
@@ -220,29 +231,36 @@
             clapCadence: "single"
           });
           saveState();
-          alert(`✓ Device "${decodeURIComponent(addName)}" has been added to your control panel!`);
+          alert(`✓ Verified & Added!\n"${decodeURIComponent(addName)}" is now linked to your phone.`);
+        } else {
+          alert(`"${decodeURIComponent(addName)}" is already configured on this phone.`);
         }
-        // Clean URL after importing
+
+        // 3. Immediately sanitize the browser URL bar so it cannot be forwarded
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
 
+    // --- SHARE WITH 10-MINUTE EXPIRING TIMESTAMP ---
     function shareDevice(index) {
       const dev = devices[index];
       const base = window.location.origin + window.location.pathname;
-      const shareUrl = `${base}?add=${encodeURIComponent(dev.name)}&ip=${encodeURIComponent(dev.ip)}`;
+
+      // Generates an epoch timestamp valid for 10 minutes from this moment
+      const expiryTimestamp = Date.now() + (10 * 60 * 1000);
+      const shareUrl = `${base}?add=${encodeURIComponent(dev.name)}&ip=${encodeURIComponent(dev.ip)}&exp=${expiryTimestamp}`;
 
       if (navigator.share) {
         navigator.share({
           title: `NARI Switch: ${dev.name}`,
-          text: `Tap this link to add "${dev.name}" to your NARI Smart Home dashboard:`,
+          text: `Tap this temporary link to pair "${dev.name}" to your phone (Valid for 10 minutes on home Wi-Fi):`,
           url: shareUrl
         }).catch(() => {});
       } else {
         navigator.clipboard.writeText(shareUrl).then(() => {
-          alert(`Link copied to clipboard!\n\nSend this link to your family member. When they open it, the switch will automatically be added to their phone.`);
+          alert(`⏱️ Secure Link Copied!\n\nThis pairing link is valid for 10 minutes only. Send it to your family member while they are connected to home Wi-Fi.`);
         }).catch(() => {
-          prompt("Copy this share link and send it to your family member:", shareUrl);
+          prompt("Copy this 10-minute pairing link:", shareUrl);
         });
       }
     }
@@ -316,7 +334,7 @@
               <button class="btn-toggle ${dev.state ? 'btn-on' : 'btn-off'}" id="btn-toggle-${index}" onclick="event.stopPropagation(); toggleDevice(${index});">
                 ${dev.state ? 'ON' : 'OFF'}
               </button>
-              <button class="btn-share" onclick="event.stopPropagation(); shareDevice(${index});" title="Share with family member">
+              <button class="btn-share" onclick="event.stopPropagation(); shareDevice(${index});" title="Share with family (10-min valid link)">
                 <i class="fa-solid fa-share-nodes"></i>
               </button>
               <button class="btn-del" onclick="event.stopPropagation(); deleteDevice(${index});">✕</button>
@@ -466,9 +484,7 @@
       let totalMag = 0;
       for (let b = 0; b < 16; b++) {
         let sum = 0;
-        for (let j = b * 8; j < (b + 1) * 8; j++) {
-          sum += freqData[j];
-        }
+        for (let j = b * 8; j < (b + 1) * 8; j++) sum += freqData[j];
         bands[b] = sum / 8;
         totalMag += bands[b];
       }
@@ -839,7 +855,7 @@
       }
     }
 
-    // Check for auto-import URL params on page load
+    // Run expiration check on load
     checkUrlPairing();
     render();
   </script>
